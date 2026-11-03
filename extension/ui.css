@@ -1,0 +1,90 @@
+:root {
+  --bg: #ffffff;
+  --fg: #1d2420;
+  --muted: #5f6b64;
+  --border: #d8e0db;
+  --surface: #f3f6f4;
+  --accent: #1e7a34;
+  --accent-fg: #ffffff;
+  --warn-bg: #fff6dd;
+  --warn-fg: #6b4e00;
+  --err-bg: #fde8e6;
+  --err-fg: #8e2318;
+  --ok-fg: #1e7a34;
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #161a18;
+    --fg: #e7ece9;
+    --muted: #9aa8a0;
+    --border: #2e3632;
+    --surface: #1f2522;
+    --accent: #3aa857;
+    --accent-fg: #0c0d0c;
+    --warn-bg: #3a3014;
+    --warn-fg: #f3d98b;
+    --err-bg: #3d1c19;
+    --err-fg: #f4b0a8;
+    --ok-fg: #6fd18a;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 13px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+h1 { font-size: 15px; margin: 0; }
+h2 { font-size: 13px; margin: 14px 0 6px; }
+
+a { color: var(--accent); }
+
+button {
+  font: inherit;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--fg);
+  padding: 7px 12px;
+  cursor: pointer;
+}
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:disabled { opacity: .55; cursor: default; }
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+  font-weight: 600;
+}
+
+.muted { color: var(--muted); }
+.small { font-size: 12px; }
+
+.notice {
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin: 8px 0;
+  white-space: pre-wrap;
+}
+.notice.warn { background: var(--warn-bg); color: var(--warn-fg); }
+.notice.err { background: var(--err-bg); color: var(--err-fg); }
+.notice.ok { background: var(--surface); }
+
+table { border-collapse: collapse; width: 100%; }
+th, td {
+  text-align: left;
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+th { font-weight: 600; color: var(--muted); font-size: 12px; }
+td.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+details { margin: 6px 0; }
+summary { cursor: pointer; font-weight: 600; }

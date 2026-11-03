@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>WikiMasters → Sheets</title>
+  <link rel="stylesheet" href="ui.css">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <h1>WikiMasters → Sheets</h1>
+    <a href="#" id="open-options" class="small">Settings</a>
+  </header>
+
+  <div id="permission" class="notice warn" hidden>
+    The extension needs access to wiki-masters.com and script.google.com.
+    <div class="actions"><button id="grant">Grant access</button></div>
+  </div>
+
+  <div id="setup" class="notice warn" hidden>
+    Fill in the Apps Script URL and secret in the <a href="#" id="open-options-2">settings</a> first.
+  </div>
+
+  <div class="actions">
+    <button id="preview" title="Shows what would be added, without writing anything">Preview</button>
+    <button id="sync" class="primary">Update sheet</button>
+  </div>
+
+  <div id="status" class="small muted"></div>
+  <div id="result"></div>
+
+  <footer class="small muted" id="last-sync"></footer>
+
+  <script src="popup.js"></script>
+</body>
+</html>

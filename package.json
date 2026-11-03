@@ -1,0 +1,11 @@
+{
+  "name": "wikimasters-sheets-sync",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Firefox extension + Apps Script that sync WikiMasters marketplace transactions to Google Sheets",
+  "scripts": {
+    "test": "node test/run-tests.js && node test/background-test.js",
+    "lint": "web-ext lint --source-dir extension",
+    "build": "web-ext build --source-dir extension --artifacts-dir dist --overwrite-dest"
+  }
+}

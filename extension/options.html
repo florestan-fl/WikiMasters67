@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>WikiMasters → Sheets · Settings</title>
+  <link rel="stylesheet" href="ui.css">
+  <style>
+    body { max-width: 640px; margin: 0 auto; padding: 24px 16px 40px; }
+    h1 { font-size: 18px; margin-bottom: 4px; }
+    label { display: block; font-weight: 600; margin: 16px 0 4px; }
+    input[type=text], input[type=password], input[type=date], input[type=number], select {
+      width: 100%;
+      font: inherit;
+      padding: 7px 9px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--fg);
+    }
+    input[type=number] { width: 120px; }
+    .help { margin-top: 3px; }
+    .row { display: flex; gap: 8px; margin-top: 20px; }
+    .check { display: flex; gap: 8px; align-items: flex-start; font-weight: 400; }
+    .check input { margin-top: 3px; }
+  </style>
+</head>
+<body>
+  <h1>WikiMasters → Google Sheets</h1>
+  <p class="muted">See <code>README.md</code> for how to create the Apps Script web app.</p>
+
+  <h2>Google Sheets connection</h2>
+
+  <label for="scriptUrl">Apps Script web app URL</label>
+  <input type="text" id="scriptUrl" placeholder="https://script.google.com/macros/s/…/exec" spellcheck="false" autocomplete="off">
+  <div class="help small muted">Deploy → Manage deployments → copy the “Web app” URL (ends with <code>/exec</code>).</div>
+
+  <label for="secret">Secret</label>
+  <input type="password" id="secret" spellcheck="false" autocomplete="off">
+  <div class="help small muted">Printed in the Apps Script execution log when you run <code>setup()</code>.</div>
+
+  <h2>Import rules</h2>
+
+  <label for="startDate">Ignore transactions before</label>
+  <input type="date" id="startDate">
+  <div class="help small muted">Paris time, midnight. Leave empty to import everything the site still shows.</div>
+
+  <label for="inclureDefault">“Inclure” for new purchases</label>
+  <select id="inclureDefault">
+    <option value="Oui">Oui (you switch non-investment purchases to “Non”)</option>
+    <option value="Non">Non (you switch investment purchases to “Oui”)</option>
+    <option value="auto">Automatic: “Oui” if that card already has an “Oui” purchase, otherwise “Non”</option>
+  </select>
+  <div class="help small muted">Purchases dated inside the period you had already tracked by hand always get “Non”, so your existing FIFO matching is not disturbed.</div>
+
+  <label for="matchWindowHours">Matching window for hand-entered rows (hours)</label>
+  <input type="number" id="matchWindowHours" min="0" max="336" step="1">
+  <div class="help small muted">Rows without a site ID are linked to a site transaction with the same card and price whose date is within this window. 0 disables matching.</div>
+
+  <label class="check"><input type="checkbox" id="renumber">
+    <span>Renumber IDs (A01…, V01…) in row order on each update<br>
+    <span class="small muted">Off: existing IDs never change and new rows take the next numbers.</span></span>
+  </label>
+
+  <div class="row">
+    <button id="save" class="primary">Save</button>
+    <button id="test">Test connection</button>
+  </div>
+  <div id="message"></div>
+
+  <script src="options.js"></script>
+</body>
+</html>

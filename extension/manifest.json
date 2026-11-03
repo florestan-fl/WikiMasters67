@@ -1,0 +1,41 @@
+{
+  "manifest_version": 3,
+  "name": "WikiMasters → Google Sheets",
+  "version": "1.0.0",
+  "description": "Adds your WikiMasters marketplace purchases and sales to your Google Sheets tracker in one click.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "wikimasters-sheets-sync@wikimasters67",
+      "strict_min_version": "128.0",
+      "data_collection_permissions": {
+        "required": ["websiteContent"]
+      }
+    }
+  },
+  "permissions": ["storage", "scripting"],
+  "host_permissions": [
+    "https://www.wiki-masters.com/*",
+    "https://wiki-masters.com/*",
+    "https://script.google.com/*",
+    "https://script.googleusercontent.com/*"
+  ],
+  "background": {
+    "scripts": ["lib/extract.js", "background.js"]
+  },
+  "action": {
+    "default_title": "WikiMasters → Google Sheets",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon.svg",
+      "32": "icons/icon.svg"
+    }
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "icons": {
+    "48": "icons/icon.svg",
+    "96": "icons/icon.svg"
+  }
+}
