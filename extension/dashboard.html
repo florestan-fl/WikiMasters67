@@ -3,37 +3,39 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>WikiMasters Trading · Tableau de bord</title>
+  <title>WikiMasters Trading</title>
   <link rel="stylesheet" href="ui.css">
   <link rel="stylesheet" href="dashboard.css">
 </head>
 <body>
   <header class="top">
     <div>
-      <h1>Tableau de bord</h1>
+      <h1>WikiMasters Trading</h1>
       <div id="updated" class="small muted"></div>
     </div>
     <div class="top-actions">
-      <button id="sync" class="primary">Mettre à jour</button>
+      <button id="go-market" title="Ouvre (ou affiche) votre onglet Marché de WikiMasters : les données arrivent quand la page se charge">Aller au Marché ↗</button>
       <button id="export" hidden>Envoyer vers Google Sheets</button>
-      <a class="button" href="options.html" target="_blank">Paramètres</a>
     </div>
   </header>
 
   <nav class="tabs" role="tablist">
-    <button role="tab" data-tab="overview" aria-selected="true">Vue d'ensemble</button>
-    <button role="tab" data-tab="cards">Par carte</button>
-    <button role="tab" data-tab="hours">Par heure</button>
-    <button role="tab" data-tab="prices">Prix</button>
-    <button role="tab" data-tab="stock">Stock</button>
-    <button role="tab" data-tab="tx">Transactions</button>
+    <a role="tab" href="#overview" data-tab="overview">Vue d'ensemble</a>
+    <a role="tab" href="#market" data-tab="market">Marché</a>
+    <a role="tab" href="#cards" data-tab="cards">Par carte</a>
+    <a role="tab" href="#hours" data-tab="hours">Par heure</a>
+    <a role="tab" href="#prices" data-tab="prices">Prix</a>
+    <a role="tab" href="#stock" data-tab="stock">Stock</a>
+    <a role="tab" href="#tx" data-tab="tx">Transactions</a>
+    <a role="tab" href="#settings" data-tab="settings" class="tab-right">Paramètres</a>
   </nav>
 
   <main>
-    <div id="status"></div>
+    <div id="export-state" aria-live="polite"></div>
     <div id="warnings"></div>
 
-    <section id="tab-overview" data-panel="overview">
+    <!-- ============================================================ overview -->
+    <section data-panel="overview">
       <div id="kpis" class="tiles"></div>
       <div class="filters">
         <span class="small secondary">Période :</span>
@@ -53,8 +55,8 @@
           <div class="chart-box"><canvas id="c-cumul"></canvas><div class="chart-empty muted" hidden>Pas encore de données.</div></div>
         </figure>
         <figure class="card chart">
-          <figcaption><h3>Patrimoine estimé</h3><span class="small muted">Solde de wikibidous + valeur estimée du stock, les jours où le solde a été relevé</span></figcaption>
-          <div class="chart-box"><canvas id="c-networth"></canvas><div class="chart-empty muted" hidden>Le solde est relevé à chaque mise à jour : la courbe apparaîtra dès la première.</div></div>
+          <figcaption><h3>Patrimoine estimé</h3><span class="small muted">Solde de wikibidous + valeur estimée du stock, les jours où le solde a été lu</span></figcaption>
+          <div class="chart-box"><canvas id="c-networth"></canvas><div class="chart-empty muted" hidden>Le solde est lu sur les pages du jeu : la courbe apparaîtra à votre prochaine visite.</div></div>
         </figure>
         <figure class="card chart">
           <figcaption><h3>Stock : coût et valeur estimée</h3><span class="small muted">En fin de journée (W)</span></figcaption>
@@ -67,7 +69,23 @@
       </details>
     </section>
 
-    <section id="tab-cards" data-panel="cards" hidden>
+    <!-- ============================================================== market -->
+    <section data-panel="market" hidden>
+      <div id="market-detail"></div>
+      <div class="filters">
+        <div class="seg" id="market-scope">
+          <button data-scope="tracked" aria-pressed="true">Cartes suivies</button>
+          <button data-scope="all">Toutes les cartes vues</button>
+        </div>
+        <input type="search" id="market-search" placeholder="Filtrer par carte">
+      </div>
+      <p class="small muted">Médiane des ventes observées sur la période choisie dans les paramètres : vos ventes, et celles des autres joueurs quand vous ouvrez une enchère terminée.
+        « Moins chère en vente » vient des annonces vues en parcourant le Marché. Cliquez une carte pour le détail.</p>
+      <div class="card"><div id="market-table"></div></div>
+    </section>
+
+    <!-- =============================================================== cards -->
+    <section data-panel="cards" hidden>
       <div class="card"><div id="cards-table"></div></div>
       <div class="charts">
         <figure class="card chart">
@@ -89,7 +107,8 @@
       </div>
     </section>
 
-    <section id="tab-hours" data-panel="hours" hidden>
+    <!-- =============================================================== hours -->
+    <section data-panel="hours" hidden>
       <div class="charts">
         <figure class="card chart">
           <figcaption><h3>Indice de prix par heure</h3><span class="small muted">1 = prix moyen de la carte · heure de Paris</span></figcaption>
@@ -103,7 +122,8 @@
       <div class="card"><div id="hours-table"></div></div>
     </section>
 
-    <section id="tab-prices" data-panel="prices" hidden>
+    <!-- ============================================================== prices -->
+    <section data-panel="prices" hidden>
       <div class="filters">
         <label class="small secondary" for="price-card">Carte :</label>
         <select id="price-card"></select>
@@ -114,13 +134,14 @@
           <div class="chart-box"><canvas id="c-inflation"></canvas><div class="chart-empty muted" hidden>Aucun achat suivi.</div></div>
         </figure>
         <figure class="card chart">
-          <figcaption><h3>Prix des transactions dans le temps</h3><span id="scatter-sub" class="small muted">W</span></figcaption>
+          <figcaption><h3>Vos transactions dans le temps</h3><span id="scatter-sub" class="small muted">W</span></figcaption>
           <div class="chart-box"><canvas id="c-scatter"></canvas><div class="chart-empty muted" hidden>Aucune transaction pour cette carte.</div></div>
         </figure>
       </div>
     </section>
 
-    <section id="tab-stock" data-panel="stock" hidden>
+    <!-- =============================================================== stock -->
+    <section data-panel="stock" hidden>
       <div class="card">
         <h3>Inventaire suivi</h3>
         <div id="stock-table"></div>
@@ -131,7 +152,8 @@
       </div>
     </section>
 
-    <section id="tab-tx" data-panel="tx" hidden>
+    <!-- ======================================================== transactions -->
+    <section data-panel="tx" hidden>
       <div class="filters">
         <div class="seg" id="tx-kind">
           <button data-kind="purchases" aria-pressed="true">Achats</button>
@@ -143,6 +165,105 @@
       <p class="small muted">Cochez « Exclure » pour retirer une transaction des statistiques (par exemple un exemplaire gardé pour la collection).</p>
       <div class="card"><div id="tx-table"></div></div>
     </section>
+
+    <!-- ============================================================ settings -->
+    <section data-panel="settings" id="tab-settings" hidden>
+      <div class="settings-head">
+        <span id="saved" class="small muted" aria-live="polite">Les modifications sont enregistrées automatiquement.</span>
+      </div>
+
+      <div class="card">
+        <h2>Cartes suivies</h2>
+        <p class="secondary small">Seules les transactions de ces cartes comptent dans les statistiques (profit, stock, graphiques), et leurs prix du marché sont listés dans l'onglet Marché.
+          Toutes vos transactions sont enregistrées quand même : ajouter une carte plus tard reprend tout son historique. Vous pouvez aussi cliquer « + Suivre » sous une enchère sur le site.</p>
+        <div class="list-head small muted"><span>Nom de la carte (titre Wikipédia)</span><span>Suivie depuis (facultatif)</span><span></span></div>
+        <div id="cards" class="rows"></div>
+        <button id="add-card">+ Ajouter une carte</button>
+        <datalist id="known-cards"></datalist>
+
+        <h3 class="spaced">Mots-clés de catégorie (facultatif)</h3>
+        <p class="secondary small">Suit aussi toute carte dont la description Wikipédia contient ce mot, par exemple « dinosaure » ou « pays ».
+          Ces descriptions sont souvent larges : vérifiez le résultat ci-dessous.</p>
+        <div id="categories" class="rows"></div>
+        <button id="add-category">+ Ajouter un mot-clé</button>
+
+        <div id="match-summary" class="notice ok small"></div>
+      </div>
+
+      <div class="card">
+        <h2>Prix du marché</h2>
+        <label class="check"><input type="checkbox" id="overlay"> Afficher la médiane et l'écart sous le prix des enchères, sur le site</label>
+        <p class="muted small">Ajoute un petit bloc sous « Mise actuelle » / « Mise de départ ». C'est la seule modification visible par la page du jeu : décochez pour ne rien afficher.</p>
+        <div class="grid">
+          <label>Écart signalé en vert / rouge (%)<input type="number" id="dealPct" min="1" max="90" step="1"></label>
+          <label>Période de la médiane (jours)<input type="number" id="mWindowDays" min="1" max="120" step="1"></label>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Valorisation du stock</h2>
+        <p class="secondary small">Valeur d'une carte en stock = médiane de ses dernières ventes observées (les vôtres et celles vues sur le marché) → sinon l'annonce la moins chère vue → sinon des ventes plus anciennes → sinon son prix d'achat.</p>
+        <div class="grid">
+          <label>Fenêtre des « ventes récentes » (jours)<input type="number" id="windowDays" min="1" max="365"></label>
+          <label>Nombre de ventes pour la médiane<input type="number" id="sampleSize" min="1" max="50"></label>
+          <label>Décote de prudence (%)<input type="number" id="haircutPct" min="0" max="100" step="1"></label>
+          <label>Commission du jeu sur les ventes (%)<input type="number" id="commissionPct" min="0" max="100" step="0.5"></label>
+          <label>Marge visée (%) pour le « prix d'achat max »<input type="number" id="targetMarginPct" min="0" max="1000" step="5"></label>
+          <label>Ventes sans achat correspondant
+            <select id="unmatched">
+              <option value="ignore">Exclues du profit (signalées)</option>
+              <option value="zero">Comptées avec un coût de 0 (cartes de paquets)</option>
+            </select>
+          </label>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Google Sheets (facultatif)</h2>
+        <p class="secondary small">Copie toutes les données et statistiques, avec les graphiques, dans une feuille Google que vous pouvez consulter partout.
+          Voir <code>README.md</code> pour créer le script (5 minutes, une seule fois).</p>
+        <label>URL de l'application web Apps Script
+          <input type="text" id="scriptUrl" placeholder="https://script.google.com/macros/s/…/exec" spellcheck="false" autocomplete="off">
+        </label>
+        <label>Secret
+          <input type="password" id="secret" spellcheck="false" autocomplete="off">
+        </label>
+        <label class="check"><input type="checkbox" id="autoExport"> Mettre à jour la feuille automatiquement quand de nouvelles transactions arrivent</label>
+        <div class="buttons">
+          <button id="test">Tester la connexion</button>
+          <button id="sheets-export">Envoyer maintenant</button>
+          <button id="import-v1">Importer l'historique de la feuille</button>
+        </div>
+        <p class="muted small">« Importer l'historique » reprend une seule fois les onglets Achats / Ventes de la version 1
+          (y compris les lignes que le site n'affiche plus). « Inclure = Non » devient une exclusion, et les cartes marquées « Oui » deviennent vos cartes suivies si la liste est vide.</p>
+        <div id="sheets-msg"></div>
+      </div>
+
+      <div class="card">
+        <h2>Sauvegarde et export</h2>
+        <p class="secondary small">Vos données sont stockées dans ce profil Firefox. Téléchargez une sauvegarde de temps en temps
+          (et avant de désinstaller l'extension : une extension temporaire perd ses données au redémarrage de Firefox).</p>
+        <div class="buttons">
+          <button id="backup">Télécharger une sauvegarde (.json)</button>
+          <label class="button">Restaurer une sauvegarde…<input type="file" id="restore" accept="application/json,.json" hidden></label>
+        </div>
+        <div class="buttons">
+          <span class="small secondary">Exporter en CSV (Excel) :</span>
+          <button data-csv="Achats">Achats</button>
+          <button data-csv="Ventes">Ventes</button>
+          <button data-csv="Par carte">Par carte</button>
+          <button data-csv="Prix du marché">Prix du marché</button>
+          <button data-csv="Par jour">Par jour</button>
+          <button data-csv="Inventaire">Inventaire</button>
+        </div>
+        <div id="data-msg"></div>
+        <details class="danger">
+          <summary class="small">Effacer toutes les données</summary>
+          <p class="small secondary">Supprime toutes les transactions et les prix enregistrés (les paramètres sont conservés). Irréversible sans sauvegarde.</p>
+          <button id="reset">Effacer les données</button>
+        </details>
+      </div>
+    </section>
   </main>
 
   <script src="vendor/chart.umd.js"></script>
@@ -150,10 +271,12 @@
   <script src="lib/time.js"></script>
   <script src="lib/settings.js"></script>
   <script src="lib/store.js"></script>
+  <script src="lib/market.js"></script>
   <script src="lib/stats.js"></script>
   <script src="lib/tables.js"></script>
   <script src="lib/format.js"></script>
   <script src="lib/charts.js"></script>
+  <script src="settings-panel.js"></script>
   <script src="dashboard.js"></script>
 </body>
 </html>

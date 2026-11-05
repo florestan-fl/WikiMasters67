@@ -19,6 +19,11 @@
       targetMarginPct: 30, // used for the "max buy price" suggestion
       unmatched: 'ignore'  // sales without a tracked purchase: 'ignore' or 'zero' (cost 0)
     },
+    market: {
+      overlay: true,       // show market prices on the site's auction tiles
+      dealPct: 15,         // green / red pill when the price is this far from the median
+      windowDays: 30       // period used for the market median
+    },
     sheets: {
       scriptUrl: '',
       secret: '',
@@ -72,6 +77,11 @@
     s.valuation.commissionPct = num(v.commissionPct, DEFAULTS.valuation.commissionPct, 0, 100);
     s.valuation.targetMarginPct = num(v.targetMarginPct, DEFAULTS.valuation.targetMarginPct, 0, 1000);
     s.valuation.unmatched = v.unmatched === 'zero' ? 'zero' : 'ignore';
+
+    var mk = raw.market || {};
+    if (mk.overlay !== undefined) s.market.overlay = !!mk.overlay;
+    s.market.dealPct = num(mk.dealPct, DEFAULTS.market.dealPct, 1, 90);
+    s.market.windowDays = Math.round(num(mk.windowDays, DEFAULTS.market.windowDays, 1, 120));
     return s;
   }
 

@@ -9,34 +9,34 @@
 <body>
   <header>
     <h1>WikiMasters Trading</h1>
-    <a href="#" id="open-options" class="small">Paramètres</a>
+    <button id="open-settings" class="link" title="Paramètres" aria-label="Paramètres">⚙ Paramètres</button>
   </header>
 
   <div id="permission" class="notice warn" hidden>
-    L'extension a besoin d'accéder à wiki-masters.com (et à script.google.com pour l'export).
+    L'extension a besoin d'accéder à wiki-masters.com pour lire les données de vos pages.
     <div class="actions"><button id="grant">Autoriser</button></div>
   </div>
 
-  <div id="no-cards" class="notice warn" hidden>
-    Aucune carte suivie pour l'instant. Ajoutez les cartes que vous échangez dans les <a href="#" id="open-options-2">paramètres</a>.
+  <ul id="status" class="status"></ul>
+  <div id="notices"></div>
+
+  <div class="actions stack">
+    <button id="dashboard" class="primary">Tableau de bord</button>
+    <div class="actions">
+      <button id="market">Prix du marché</button>
+      <button id="marketplace" title="Ouvre (ou affiche) votre onglet Marché de WikiMasters">Aller au Marché ↗</button>
+    </div>
+    <button id="export" hidden>Envoyer vers Google Sheets</button>
   </div>
 
-  <div class="actions">
-    <button id="sync" class="primary">Mettre à jour</button>
-    <button id="dashboard">Tableau de bord</button>
-  </div>
+  <div id="recent"></div>
 
-  <div id="status" class="small muted"></div>
-  <div id="tiles" class="tiles"></div>
-  <div id="result"></div>
+  <p class="small muted how">Les données arrivent quand vous ouvrez le Marché de WikiMasters : l'extension lit les réponses que votre navigateur reçoit, sans rien envoyer au jeu.</p>
 
-  <footer class="small muted" id="footer"></footer>
-
-  <script src="lib/extract.js"></script>
   <script src="lib/time.js"></script>
   <script src="lib/settings.js"></script>
+  <script src="lib/extract.js"></script>
   <script src="lib/store.js"></script>
-  <script src="lib/stats.js"></script>
   <script src="lib/format.js"></script>
   <script src="popup.js"></script>
 </body>

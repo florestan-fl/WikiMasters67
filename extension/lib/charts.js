@@ -154,6 +154,17 @@
           barPercentage: 0.9
         });
       }
+      if (opts.type === 'scatter' && d.line) {
+        return Object.assign(base, {
+          showLine: true,
+          borderColor: color,
+          backgroundColor: color,
+          borderWidth: 2,
+          pointRadius: 0,
+          pointHoverRadius: 4,
+          pointHitRadius: 8,
+        });
+      }
       if (opts.type === 'scatter') {
         return Object.assign(base, {
           backgroundColor: color,

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Mock marketplace (layout modelled on wiki-masters.com/marketplace)</title>
+<style>
+  body { background: #0c0d0c; color: #eee; font-family: system-ui, sans-serif; margin: 0; padding: 20px; }
+  .wallet { position: fixed; top: 10px; right: 10px; color: #3aa857; background: #161a18; border: 0; padding: 4px 8px; border-radius: 6px; }
+  .grid { display: grid; grid-template-columns: repeat(3, 220px); gap: 16px; }
+  a.tile { display: block; background: #161a18; border-radius: 12px; padding: 10px; color: inherit; text-decoration: none; }
+  .art { height: 110px; border-radius: 8px; background: linear-gradient(135deg, #f4b400, #c98500); color: #222; padding: 8px; font-weight: 700; }
+  .label { font-size: 11px; text-transform: uppercase; color: #9a988f; margin-top: 8px; }
+  .row { display: flex; justify-content: space-between; align-items: flex-end; }
+  .price { color: #3aa857; font-weight: 700; }
+  .by { font-size: 11px; color: #9a988f; margin-top: 6px; }
+  .detail { margin-top: 24px; background: #161a18; padding: 12px; border-radius: 12px; width: 460px; }
+</style>
+</head>
+<body>
+  <button class="wallet" title="1 667 wikibidous — Ouvrir la boutique">1 667</button>
+  <h1>Marché</h1>
+  <div class="grid">
+    <a class="tile" href="/marketplace/aaaa1111-0000-4000-8000-000000000001">
+      <div class="art">UR<br>Terre<br><small>troisième planète du Système solaire</small></div>
+      <div class="row"><div><div class="label">Mise de départ</div><div class="price">4 500</div></div><div class="by">Durée 8m 40s</div></div>
+      <div class="by">Vendu par Gaa'</div>
+    </a>
+    <a class="tile" href="/marketplace/aaaa1111-0000-4000-8000-000000000002">
+      <div class="art">UR<br>Neptune (planète)<br><small>huitième planète</small></div>
+      <div class="row"><div><div class="label">Mise actuelle</div><div class="price">2 750</div></div><div class="by">Durée 1h47</div></div>
+      <div class="by">Vendu par koslows</div>
+    </a>
+    <div class="tile" role="button">
+      <div class="art">UR<br>Vénus (planète)<br><small>deuxième planète</small></div>
+      <div class="row"><div><div class="label">Mise de départ</div><div class="price">3 500</div></div><div class="by">Durée 1h39</div></div>
+      <div class="by">Vendu par FrançoisWiki</div>
+    </div>
+  </div>
+</body>
+</html>

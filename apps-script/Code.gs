@@ -50,7 +50,7 @@ function doPost(e) {
     var req = JSON.parse(body);
     checkSecret(req.secret);
     if (req.action === 'ping') result = ping();
-    else if (req.action === 'write') result = withLock(function () { return writeAll(req.tables || []); });
+    else if (req.action === 'write') result = withLock(function () { return writeAll(req.tables || [], Number(req.index) || 0); });
     else if (req.action === 'readV1') result = readSheetRows();
     else throw new Error('Action inconnue : ' + req.action + '. Mettez à jour le script (Code.gs version 2).');
   } catch (err) {
@@ -80,13 +80,14 @@ function setup() {
 /* Writing                                                                  */
 /* ------------------------------------------------------------------------ */
 
-function writeAll(tables) {
+/** startIndex: tab position of the first table (the extension sends one table per request). */
+function writeAll(tables, startIndex) {
   var ss = getSpreadsheet();
   var warnings = [];
   var written = [];
   tables.forEach(function (t, i) {
     validateTable(t);
-    var sh = managedSheet(ss, t.name, i, warnings);
+    var sh = managedSheet(ss, t.name, (startIndex || 0) + i, warnings);
     writeTable(sh, t, warnings);
     written.push({ name: t.name, rows: t.rows.length });
   });

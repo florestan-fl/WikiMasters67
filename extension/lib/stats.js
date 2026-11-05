@@ -18,12 +18,12 @@
   var Time = root.WMTime || (typeof require === 'function' ? require('./time') : null);
   var Extract = root.WMExtract || (typeof require === 'function' ? require('./extract') : null);
   var Store = root.WMStore || (typeof require === 'function' ? require('./store') : null);
+  var Market = root.WMMarket || (typeof require === 'function' ? require('./market') : null);
   var cardKey = Extract.cardKey;
   var SOLD = Extract.SOLD;
 
   var DAY = 86400000;
   var HOUR = 3600000;
-  var ASK_MAX_AGE = 2 * DAY;
   var MAX_SERIES = 8;
 
   var SOURCE = {
@@ -164,11 +164,17 @@
       }
     });
 
-    // Price evidence per card: every sold listing (tracked or not, not excluded).
+    // Price evidence per card: your sold listings (tracked or not, not excluded)
+    // and other players' sales seen on the site (non-shiny copies).
     var soldEvidence = {};
     sales.forEach(function (s) {
-      if (s.status === SOLD && !s.excluded) (soldEvidence[s.key] = soldEvidence[s.key] || []).push({ t: s.time, price: s.price });
+      if (s.status === SOLD && !s.excluded && !s.shiny) (soldEvidence[s.key] = soldEvidence[s.key] || []).push({ t: s.time, price: s.price });
     });
+    Object.keys(db.marketSales || {}).forEach(function (k) {
+      if (/ ✦$/.test(k)) return;
+      db.marketSales[k].forEach(function (o) { (soldEvidence[k] = soldEvidence[k] || []).push({ t: o.t, price: o.price }); });
+    });
+    Object.keys(soldEvidence).forEach(function (k) { soldEvidence[k].sort(function (a, b) { return a.t - b.t; }); });
 
     var windowMs = v.windowDays * DAY;
     function unitValue(key, at, fallbackCost) {
@@ -180,9 +186,9 @@
         base = median(recent.map(function (o) { return o.price; }));
         source = SOURCE.recent;
       } else {
-        var asks = (db.market[key] || []).filter(function (o) { return o.t <= at && o.t >= at - ASK_MAX_AGE; });
-        if (asks.length) {
-          base = Math.min.apply(null, asks.map(function (o) { return o.price; }));
+        var ask = Market.askAt(db, key, at);
+        if (ask !== null) {
+          base = ask;
           source = SOURCE.asks;
         } else if (ev.length) {
           base = median(ev.slice(-v.sampleSize).map(function (o) { return o.price; }));
@@ -424,9 +430,16 @@
       };
     });
 
+    // Market prices of the tracked cards.
+    var marketAll = Market.allStats(db, now, settings.market.windowDays);
+    var market = Object.keys(marketAll).map(function (k) { return marketAll[k]; })
+      .filter(function (x) { return !!match(x.card.replace(/ ✦$/, '')); })
+      .sort(function (a, b) { return a.card.localeCompare(b.card, 'fr'); });
+
     return {
       now: now,
       settings: settings,
+      market: market,
       purchases: purchases,
       sales: sales,
       inventory: inventory,

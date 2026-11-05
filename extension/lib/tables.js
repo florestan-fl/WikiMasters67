@@ -104,6 +104,23 @@
     };
   }
 
+  function marketPrices(m) {
+    var target = m.settings.valuation.targetMarginPct / 100;
+    var fee = m.settings.valuation.commissionPct / 100;
+    return {
+      name: 'Prix du marché',
+      headers: ['Carte', 'Rareté', 'Médiane des ventes (W)', 'Ventes observées', 'Dont les vôtres', 'P25 (W)', 'P75 (W)', 'Min (W)',
+        'Max (W)', 'Tendance 7 j', 'Tendance 30 j', 'Moins chère en vente (W)', 'Annonces actives', 'Achat max conseillé (W)'],
+      rows: m.market.map(function (x) {
+        return [x.card, x.rarity, r0(x.median), x.n, x.nOwn, r0(x.p25), r0(x.p75), r0(x.min), r0(x.max), r3(x.trend7), r3(x.trend30),
+          r0(x.lowestAsk), x.asks, x.median === null ? null : r0(x.median * (1 - fee) / (1 + target))];
+      }),
+      formats: ['text', 'text', 'int', 'int', 'int', 'int', 'int', 'int', 'int', 'pct', 'pct', 'int', 'int', 'int'],
+      charts: [{ type: 'COLUMN', title: 'Médiane des ventes par carte (W)', domain: 0, series: [2], legend: 'none' }],
+      freezeCols: 1
+    };
+  }
+
   function perHour(m) {
     return {
       name: 'Par heure',
@@ -191,7 +208,7 @@
 
   /** All tables, in tab order. */
   function build(m) {
-    return [dashboard(m), perDay(m), inventory(m), perCard(m), perHour(m), inflation(m), pricesOverTime(m),
+    return [dashboard(m), perDay(m), inventory(m), perCard(m), marketPrices(m), perHour(m), inflation(m), pricesOverTime(m),
       purchasesTable(m), salesTable(m)];
   }
 

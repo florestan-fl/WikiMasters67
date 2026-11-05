@@ -5,9 +5,10 @@
  *   purchases / sales  { [auctionId]: record }   insert-only: a finished auction never changes
  *   overrides          { [id]: { excluded: true } }  your per-transaction exceptions
  *   cards              { [cardKey]: { title, category, rarity } }
- *   market             { [cardKey]: [{ t, price }] }  other players' listings seen during updates
- *   listings           your active listings at the last update
- *   snapshots          [{ t, balance }]  wikibidous balance at each update
+ *   auctions / marketSales   market observations (see market.js)
+ *   listings           your active listings, as last seen
+ *   snapshots          [{ t, balance }]  wikibidous balance, as read on the site
+ *   meta               capture status (last data received, recent additions, warnings)
  */
 (function (root) {
   'use strict';
@@ -15,10 +16,8 @@
   var Extract = root.WMExtract || (typeof require === 'function' ? require('./extract') : null);
   var cardKey = Extract.cardKey;
 
-  var DAY = 86400000;
-  var MARKET_KEEP_DAYS = 14;
-  var MARKET_KEEP_PER_CARD = 40;
   var SNAPSHOT_KEEP = 5000;
+  var RECENT_KEEP = 30;
 
   function emptyDb() {
     return {
@@ -27,10 +26,12 @@
       sales: {},
       overrides: {},
       cards: {},
-      market: {},
+      auctions: {},
+      marketSales: {},
       listings: [],
       snapshots: [],
-      counters: { A: 0, V: 0 }
+      counters: { A: 0, V: 0 },
+      meta: { me: null, lastCapture: null, captures: 0, recent: [], warning: null }
     };
   }
 
@@ -40,6 +41,8 @@
     Object.keys(base).forEach(function (k) {
       if (db[k] === undefined || db[k] === null) db[k] = base[k];
     });
+    delete db.market; // v2.0 asks, replaced by db.auctions
+    if (!Array.isArray(db.meta.recent)) db.meta.recent = [];
     if (!db.counters.A) db.counters.A = maxLabel(db.purchases, 'A');
     if (!db.counters.V) db.counters.V = maxLabel(db.sales, 'V');
     return db;
@@ -111,30 +114,28 @@
       };
     });
 
-    var seenAsk = {};
-    (data.asks || []).forEach(function (a) {
-      var k = cardKey(a.card);
-      if (!k || seenAsk[a.id]) return;
-      seenAsk[a.id] = true;
-      (db.market[k] = db.market[k] || []).push({ t: now, price: a.price });
-    });
-    pruneMarket(db, now);
+    if (added.purchases.length || added.sales.length) {
+      added.purchases.concat(added.sales).sort(function (a, b) { return a.time - b.time; }).forEach(function (r) {
+        db.meta.recent.push({ id: r.id, label: r.label, time: r.time, card: r.card, price: r.price, status: r.status || null, addedAt: now });
+      });
+      db.meta.recent = db.meta.recent.slice(-RECENT_KEEP);
+    }
 
     if (data.selling) db.listings = data.selling.map(function (s) { return { card: s.card, price: s.price, end: s.end, hasBid: !!s.hasBid }; });
 
-    if (typeof data.balance === 'number' && isFinite(data.balance)) {
-      db.snapshots.push({ t: now, balance: data.balance });
-      if (db.snapshots.length > SNAPSHOT_KEEP) db.snapshots = db.snapshots.slice(-SNAPSHOT_KEEP);
-    }
+    if (typeof data.balance === 'number') addBalance(db, data.balance, now);
     return added;
   }
 
-  function pruneMarket(db, now) {
-    Object.keys(db.market).forEach(function (k) {
-      var list = db.market[k].filter(function (o) { return o.t >= now - MARKET_KEEP_DAYS * DAY; });
-      if (list.length > MARKET_KEEP_PER_CARD) list = list.slice(-MARKET_KEEP_PER_CARD);
-      if (list.length) db.market[k] = list; else delete db.market[k];
-    });
+  /** Adds a balance reading, at most one every 10 minutes unless it changed. */
+  function addBalance(db, balance, now) {
+    normalizeDb(db);
+    if (typeof balance !== 'number' || !isFinite(balance)) return false;
+    var last = db.snapshots[db.snapshots.length - 1];
+    if (last && last.balance === balance && now - last.t < 10 * 60000) return false;
+    db.snapshots.push({ t: now, balance: balance });
+    if (db.snapshots.length > SNAPSHOT_KEEP) db.snapshots = db.snapshots.slice(-SNAPSHOT_KEEP);
+    return true;
   }
 
   /**
@@ -229,7 +230,7 @@
   }
 
   var api = {
-    emptyDb: emptyDb, normalizeDb: normalizeDb, mergeSync: mergeSync, importV1: importV1,
+    emptyDb: emptyDb, normalizeDb: normalizeDb, mergeSync: mergeSync, importV1: importV1, addBalance: addBalance,
     setExcluded: setExcluded, isExcluded: isExcluded, newestTimes: newestTimes, values: values,
     makeBackup: makeBackup, readBackup: readBackup
   };

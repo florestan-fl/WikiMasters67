@@ -1,0 +1,40 @@
+/* Market badge added under auction prices (WikiMasters Trading). */
+.wmt-badge {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 2px 0 0;
+  font: 600 11px/1.3 system-ui, -apple-system, "Segoe UI", sans-serif;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.wmt-badge button {
+  font: inherit;
+  cursor: pointer;
+  border: 0;
+  margin: 0;
+}
+.wmt-median {
+  background: none;
+  padding: 0;
+  color: #b3a9f5;
+}
+.wmt-median:hover { text-decoration: underline; }
+.wmt-pill {
+  border-radius: 999px;
+  padding: 0 6px;
+  background: rgba(195, 194, 183, 0.18);
+  color: #e1e0d9;
+}
+.wmt-pill.wmt-good { background: rgba(12, 163, 12, 0.22); color: #7fe07f; }
+.wmt-pill.wmt-bad { background: rgba(208, 59, 59, 0.25); color: #ff9a9a; }
+.wmt-follow {
+  border-radius: 6px;
+  padding: 1px 6px;
+  background: rgba(98, 80, 214, 0.25);
+  color: #d4ceff;
+}
+.wmt-follow:hover { background: rgba(98, 80, 214, 0.4); }
+.wmt-follow:disabled { opacity: 0.6; cursor: default; }
+.wmt-muted { color: #9a988f; font-weight: 400; }

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "WikiMasters Trading",
-  "version": "2.0.0",
-  "description": "Suivez vos achats et ventes sur le marché WikiMasters : profit par jour, stock, statistiques par carte, export Google Sheets.",
+  "version": "3.0.0",
+  "description": "Suivez vos achats et ventes sur le marché WikiMasters et les prix du marché : profit par jour, stock, statistiques, export Google Sheets. Lecture passive : aucune requête envoyée au jeu.",
   "browser_specific_settings": {
     "gecko": {
       "id": "wikimasters-sheets-sync@wikimasters67",
@@ -12,7 +12,7 @@
       }
     }
   },
-  "permissions": ["storage", "scripting", "unlimitedStorage"],
+  "permissions": ["storage", "unlimitedStorage", "webRequest", "webRequestBlocking", "webRequestFilterResponse"],
   "host_permissions": [
     "https://www.wiki-masters.com/*",
     "https://wiki-masters.com/*",
@@ -20,8 +20,16 @@
     "https://script.googleusercontent.com/*"
   ],
   "background": {
-    "scripts": ["lib/extract.js", "lib/time.js", "lib/settings.js", "lib/store.js", "lib/stats.js", "lib/tables.js", "background.js"]
+    "scripts": ["lib/extract.js", "lib/time.js", "lib/settings.js", "lib/store.js", "lib/market.js", "lib/stats.js", "lib/tables.js", "background.js"]
   },
+  "content_scripts": [
+    {
+      "matches": ["https://www.wiki-masters.com/*", "https://wiki-masters.com/*"],
+      "js": ["content/site.js"],
+      "css": ["content/site.css"],
+      "run_at": "document_idle"
+    }
+  ],
   "action": {
     "default_title": "WikiMasters Trading",
     "default_popup": "popup.html",

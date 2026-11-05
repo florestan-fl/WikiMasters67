@@ -14,6 +14,7 @@ const Settings = require('../extension/lib/settings');
 const Store = require('../extension/lib/store');
 const Stats = require('../extension/lib/stats');
 const Tables = require('../extension/lib/tables');
+const Market = require('../extension/lib/market');
 
 let passed = 0;
 function test(name, fn) {
@@ -226,12 +227,18 @@ test('stats: commission and haircut', () => {
   assert.strictEqual(m.inventory[0].unitValue, 300 * 0.9 * 0.8);
 });
 
-test('stats: market listings value stock without recent sales', () => {
+test('stats: market listings and other players\' sales value the stock', () => {
   const { db, now, T } = scenario();
-  Store.mergeSync(db, { purchases: [{ id: 'p9', time: T(2, 12), card: 'Diplodocus', price: 2350 }], asks: [{ id: 'm1', card: 'Diplodocus', price: 1800 }] }, now - 3600e3);
-  const m = Stats.compute(db, settingsWith(['Triceratops', 'Diplodocus']), now);
-  const dip = m.inventory.find((i) => i.card === 'Diplodocus');
+  Store.mergeSync(db, { purchases: [{ id: 'p9', time: T(2, 12), card: 'Diplodocus', price: 2350 }] }, now - 7200e3);
+  Market.ingest(db, { auctions: [auction('m1', 'Diplodocus', { effective_bid: 1800, seller_id: 'other' })] }, now - 3600e3, 'me');
+  let m = Stats.compute(db, settingsWith(['Triceratops', 'Diplodocus']), now);
+  let dip = m.inventory.find((i) => i.card === 'Diplodocus');
   assert.deepStrictEqual([dip.unitValue, dip.valueSource], [1800, 'annonces en cours']);
+  // A finished sale seen on the site beats the listings.
+  Market.ingest(db, { auction: auction('m2', 'Diplodocus', { status: 'settled_sold', final_price: 2600, seller_id: 'other', settled_at: new Date(now - 600e3).toISOString() }) }, now - 600e3, 'me');
+  m = Stats.compute(db, settingsWith(['Triceratops', 'Diplodocus']), now);
+  dip = m.inventory.find((i) => i.card === 'Diplodocus');
+  assert.deepStrictEqual([dip.unitValue, dip.valueSource], [2600, 'ventes récentes']);
 });
 
 test('stats: hours use Paris time and price indices', () => {
@@ -260,14 +267,94 @@ test('stats on your real data: v1 import + site data', () => {
   assert.strictEqual(m.kpis.realizedTotal, m.days.reduce((s, d) => s + d.realized, 0));
 });
 
+/* ---------------------------------------------------------------- market */
+
+function auction(id, title, extra) {
+  return Object.assign({
+    id, status: 'active', card_id: `c-${title}`, card: { wikipedia_title: title, rarity: 'UR', category: 'planète' },
+    snapshot_rarity: 'UR', base_amount: 100, current_bid: null, effective_bid: 100, final_price: null,
+    end_at: '2026-11-05T20:00:00+00:00', settled_at: null, seller_id: 'other', is_shiny: false
+  }, extra || {});
+}
+
+test('market: finds auctions anywhere in an answer, ignores the rest', () => {
+  const json = { page: 1, auctions: [auction('a1', 'Terre')], detail: { auction: auction('a2', 'Mars'), bids: [{ id: 'b1', amount: 5 }] }, user: { id: 'x' } };
+  assert.deepStrictEqual(Market.findAuctions(json).map((a) => a.id), ['a1', 'a2']);
+  assert.deepStrictEqual(Market.findAuctions(fx.apiResponse()).length, 88, 'history + won of the real answer');
+});
+
+test('market: records listings and other players\' sales; own sales come from db.sales', () => {
+  const db = Store.emptyDb();
+  const now = Date.UTC(2026, 10, 5, 12);
+  const res = Market.ingest(db, {
+    auctions: [
+      auction('a1', 'Terre', { effective_bid: 4500 }),
+      auction('a2', 'Terre', { status: 'settled_sold', final_price: 4800, settled_at: '2026-11-04T10:00:00+00:00', end_at: '2026-11-04T10:00:00+00:00' }),
+      auction('a3', 'Terre', { status: 'settled_sold', final_price: 9999, seller_id: 'me', end_at: '2026-11-04T11:00:00+00:00' }),
+      auction('a4', 'Terre', { is_shiny: true, effective_bid: 20000 })
+    ]
+  }, now, 'me');
+  assert.deepStrictEqual([res.auctions, res.sales], [4, 1]);
+  assert.deepStrictEqual(db.marketSales.terre.map((x) => x.price), [4800]);
+  assert.ok(db.auctions.a4.key.endsWith('✦'), 'shiny kept apart');
+  // Seeing the same sale again does not count twice.
+  Market.ingest(db, { auction: auction('a2', 'Terre', { status: 'settled_sold', final_price: 4800, end_at: '2026-11-04T10:00:00+00:00' }) }, now, 'me');
+  assert.strictEqual(db.marketSales.terre.length, 1);
+  // Your own sale (from the won/history lists) joins the stats.
+  Store.mergeSync(db, { sales: [{ id: 's1', time: Date.UTC(2026, 10, 3, 9), card: 'Terre', price: 4000, status: 'Vendue', party: 'x' }] });
+  const st = Market.allStats(db, now, 30).terre;
+  assert.deepStrictEqual([st.n, st.nOwn, st.median, st.min, st.max, st.lowestAsk, st.asks], [2, 1, 4400, 4000, 4800, 4500, 1]);
+  assert.strictEqual(Market.allStats(db, now, 30)['terre ✦'].lowestAsk, 20000);
+  // Ended auctions are forgotten after 2 days.
+  Market.prune(db, Date.UTC(2026, 10, 9));
+  assert.deepStrictEqual(Object.keys(db.auctions), []);
+  assert.strictEqual(db.marketSales.terre.length, 1, 'sales are kept');
+});
+
+test('market: quantiles and trends', () => {
+  assert.strictEqual(Market.quantile([1, 2, 3, 4], 0.5), 2.5);
+  assert.strictEqual(Market.quantile([10, 20, 30, 40, 50], 0.25), 20);
+  const db = Store.emptyDb();
+  const now = Date.UTC(2026, 10, 30, 12);
+  const day = 86400e3;
+  db.marketSales.terre = [
+    { id: 'o1', t: now - 20 * day, price: 100 }, { id: 'o2', t: now - 15 * day, price: 100 },
+    { id: 'n1', t: now - 2 * day, price: 120 }, { id: 'n2', t: now - day, price: 130 }
+  ];
+  const st = Market.allStats(db, now, 30).terre;
+  assert.strictEqual(Math.round(st.trend7 * 1000) / 1000, 0.25);
+  assert.strictEqual(st.trend30, null, 'not enough data before 30 days');
+  assert.deepStrictEqual(Market.dailyMedians(db.marketSales.terre).length, 4);
+});
+
+test('market: overlay info by auction id or by tile text', () => {
+  const db = Store.emptyDb();
+  const now = Date.UTC(2026, 10, 5, 12);
+  Market.ingest(db, { auctions: [
+    auction('a1', 'Terre', { effective_bid: 3500 }),
+    auction('a2', 'Neptune (planète)', { effective_bid: 2750, current_bid: 2750 }),
+    auction('s1', 'Terre', { status: 'settled_sold', final_price: 5000, end_at: '2026-11-04T10:00:00+00:00' }),
+    auction('s2', 'Terre', { status: 'settled_sold', final_price: 5000, end_at: '2026-11-04T11:00:00+00:00' })
+  ] }, now, 'me');
+  const tracked = (c) => c === 'Terre';
+  const items = Market.overlayInfo(db, [
+    { ref: 0, id: 'a1' },
+    { ref: 1, id: null, text: 'UR Neptune (planète) huitième planète MISE ACTUELLE 2 750 DURÉE 1h47' },
+    { ref: 2, id: null, text: 'Carte inconnue 12' }
+  ], tracked, now, 30, 15);
+  assert.deepStrictEqual(items.map((i) => i.found), [true, true, false]);
+  assert.deepStrictEqual([items[0].median, Math.round(items[0].diff * 100), items[0].deal, items[0].tracked], [5000, -30, 'good', true]);
+  assert.deepStrictEqual([items[1].card, items[1].median, items[1].deal, items[1].tracked], ['Neptune (planète)', null, 'none', false]);
+});
+
 /* ---------------------------------------------------------------- tables */
 
 test('tables: every row matches its headers; CSV for French Excel', () => {
   const { db, now } = scenario();
   const m = Stats.compute(db, settingsWith(['Triceratops']), now);
   const tables = Tables.build(m);
-  assert.deepStrictEqual(tables.map((t) => t.name), ['Tableau de bord', 'Par jour', 'Inventaire', 'Par carte', 'Par heure',
-    'Inflation', 'Prix dans le temps', 'Achats', 'Ventes']);
+  assert.deepStrictEqual(tables.map((t) => t.name), ['Tableau de bord', 'Par jour', 'Inventaire', 'Par carte', 'Prix du marché',
+    'Par heure', 'Inflation', 'Prix dans le temps', 'Achats', 'Ventes']);
   tables.forEach((t) => {
     assert.strictEqual(t.formats.length, t.headers.length, `${t.name} formats`);
     t.rows.forEach((r) => assert.strictEqual(r.length, t.headers.length, `${t.name} row length`));
@@ -342,8 +429,8 @@ test('apps script: write creates the template, archives v1 tabs, then reuses its
   assert.strictEqual(res.ok, true, res.error);
   assert.deepStrictEqual(res.warnings.filter((w) => !/conservé/.test(w)), []);
   const names = ss.getSheets().map((s) => s.getName());
-  assert.deepStrictEqual(names.slice(0, 9), ['Tableau de bord', 'Par jour', 'Inventaire', 'Par carte', 'Par heure', 'Inflation',
-    'Prix dans le temps', 'Achats', 'Ventes']);
+  assert.deepStrictEqual(names.slice(0, 10), ['Tableau de bord', 'Par jour', 'Inventaire', 'Par carte', 'Prix du marché', 'Par heure',
+    'Inflation', 'Prix dans le temps', 'Achats', 'Ventes']);
   assert.ok(names.includes('Achats (v1)') && names.includes('Ventes (v1)') && names.includes('Par heure (v1)') && names.includes('Par espèce'));
 
   const ventes = ss.getSheetByName('Ventes');
@@ -376,7 +463,7 @@ test('apps script: write on an empty spreadsheet (template for new players)', ()
   const m = Stats.compute(Store.emptyDb(), Settings.normalize({}), Date.now());
   const res = call({ action: 'write', tables: JSON.parse(JSON.stringify(Tables.build(m))) });
   assert.strictEqual(res.ok, true, res.error);
-  assert.strictEqual(ss.getSheets().length, 10);
+  assert.strictEqual(ss.getSheets().length, 11);
   assert.strictEqual(ss.getSheetByName('Achats').cell(1, 3).v, 'Carte');
 });
 

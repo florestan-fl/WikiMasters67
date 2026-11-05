@@ -65,7 +65,10 @@
           return el('th', { class: c.num ? 'num' : null, text: c.label, title: c.title || null });
         }))),
         el('tbody', null, rows.map(function (r) {
-          return el('tr', { class: opts.rowClass ? opts.rowClass(r) : null }, columns.map(function (c) {
+          return el('tr', {
+            class: opts.rowClass ? opts.rowClass(r) : null,
+            onclick: opts.onRowClick ? function () { opts.onRowClick(r); } : null
+          }, columns.map(function (c) {
             var v = c.value(r);
             if (v instanceof Node) return el('td', { class: c.num ? 'num' : null }, v);
             var text = c.format ? c.format(v) : (v === null || v === undefined ? '' : String(v));

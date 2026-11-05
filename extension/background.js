@@ -1,35 +1,234 @@
-/* global browser, WMExtract, WMStore, WMStats, WMTables, WMSettings */
+/* global browser, WMExtract, WMStore, WMMarket, WMStats, WMTables, WMSettings */
 'use strict';
 
-const SITE_ORIGIN = 'https://www.wiki-masters.com';
+/*
+ * Passive capture: the extension never sends a request to wiki-masters.com.
+ * When YOUR marketplace page loads its data (/api/marketplace…), Firefox hands
+ * the extension a copy of the response while it is passed to the page
+ * unchanged (webRequest.filterResponseData). The balance is read from the page
+ * by the content script. Everything else happens locally.
+ */
+
+const API_URLS = ['https://www.wiki-masters.com/api/marketplace*', 'https://wiki-masters.com/api/marketplace*'];
 const SITE_MATCH = ['https://www.wiki-masters.com/*', 'https://wiki-masters.com/*'];
-const PAGE_LIMIT = 50;
-const MAX_PAGES = 5;
-const TAB_LOAD_TIMEOUT_MS = 45000;
+const MARKET_PAGE = 'https://www.wiki-masters.com/marketplace';
+const FULL_LIST = 50;
+const MAX_BODY = 8 * 1024 * 1024;
+const AUTO_EXPORT_DELAY_MS = 90 * 1000;
 
-let running = false;
 let dbQueue = Promise.resolve();
+let exporting = false;
+let exportTimer = null;
 
-browser.runtime.onMessage.addListener((msg) => {
+/* ------------------------------------------------------------------------ */
+/* Capture                                                                  */
+/* ------------------------------------------------------------------------ */
+
+browser.webRequest.onBeforeRequest.addListener(onApiRequest, { urls: API_URLS, types: ['xmlhttprequest'] }, ['blocking']);
+
+function onApiRequest(details) {
+  if (details.method !== 'GET') return {};
+  let filter;
+  try {
+    filter = browser.webRequest.filterResponseData(details.requestId);
+  } catch (e) {
+    setCaptureError(`Lecture impossible : ${(e && e.message) || e}`);
+    return {};
+  }
+  const chunks = [];
+  let size = 0;
+  filter.ondata = (event) => {
+    filter.write(event.data); // the page receives the response untouched
+    size += event.data.byteLength;
+    if (size <= MAX_BODY) chunks.push(event.data);
+  };
+  filter.onstop = () => {
+    filter.close();
+    if (size <= MAX_BODY) handleBody(details.url, chunks).catch((e) => setCaptureError(String((e && e.message) || e)));
+  };
+  filter.onerror = () => {
+    try { filter.disconnect(); } catch (e) { /* already gone */ }
+  };
+  return {};
+}
+
+async function handleBody(url, chunks) {
+  const bytes = new Uint8Array(chunks.reduce((n, c) => n + c.byteLength, 0));
+  let offset = 0;
+  for (const c of chunks) { bytes.set(new Uint8Array(c), offset); offset += c.byteLength; }
+  let json;
+  try {
+    json = JSON.parse(new TextDecoder('utf-8').decode(bytes));
+  } catch (e) {
+    return; // not JSON (error page…): ignore
+  }
+  await ingest(url, json, Date.now());
+}
+
+/** Exposed for tests: processes one API answer. */
+async function ingest(url, json, now) {
+  const result = await withDb((db) => {
+    const out = { added: { purchases: [], sales: [] }, auctions: 0, marketSales: 0, own: false, warning: null };
+    if (json && Array.isArray(json.history) && Array.isArray(json.won)) {
+      const ex = WMExtract.extract(json);
+      if (ex.me) db.meta.me = ex.me;
+      const before = WMStore.newestTimes(db);
+      out.added = WMStore.mergeSync(db, ex, now);
+      out.own = true;
+      out.warning = gapWarning(ex, before);
+      db.meta.warning = out.warning ? { t: now, text: out.warning } : null;
+    }
+    const m = WMMarket.ingest(db, json, now, db.meta.me);
+    out.auctions = m.auctions;
+    out.marketSales = m.sales;
+    if (out.own || m.auctions) {
+      db.meta.lastCapture = now;
+      db.meta.lastCaptureKind = out.own ? 'own' : 'market';
+      if (out.own) db.meta.lastOwnCapture = now;
+      db.meta.captures = (db.meta.captures || 0) + 1;
+      db.meta.captureError = null;
+    }
+    return out;
+  });
+  if (result.added.purchases.length || result.added.sales.length) scheduleAutoExport();
+  if (result.auctions) notifySiteTabs({ type: 'marketUpdated' });
+  updateBadge();
+  return result;
+}
+
+/** The site only lists your last 50 sales / won auctions. */
+function gapWarning(ex, before) {
+  const parts = [];
+  const check = (list, previousNewest, label) => {
+    if (list.length < FULL_LIST || previousNewest === null) return;
+    const oldest = list.reduce((m, it) => Math.min(m, it.time), Infinity);
+    if (oldest > previousNewest) parts.push(label);
+  };
+  check(ex.purchases, before.purchases, 'achats');
+  check(ex.sales, before.sales, 'ventes');
+  if (!parts.length) return null;
+  return `Des ${parts.join(' et des ')} ont pu être manqués : le site n'affiche que les 50 derniers. Ouvrez le marché au moins tous les deux jours.`;
+}
+
+browser.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes.settings) notifySiteTabs({ type: 'marketUpdated' });
+});
+
+async function setCaptureError(text) {
+  await withDb((db) => { db.meta.captureError = { t: Date.now(), text }; });
+}
+
+async function notifySiteTabs(msg) {
+  try {
+    const tabs = await browser.tabs.query({ url: SITE_MATCH });
+    tabs.forEach((t) => browser.tabs.sendMessage(t.id, msg).catch(() => {}));
+  } catch (e) { /* no tab */ }
+}
+
+async function updateBadge() {
+  try {
+    const db = await loadDb();
+    const since = db.meta.badgeClearedAt || 0;
+    const n = (db.meta.recent || []).filter((r) => r.addedAt > since).length;
+    browser.action.setBadgeBackgroundColor({ color: '#1e7a34' });
+    browser.action.setBadgeText({ text: n ? String(n) : '' });
+  } catch (e) { /* cosmetic */ }
+}
+
+/* ------------------------------------------------------------------------ */
+/* Messages                                                                 */
+/* ------------------------------------------------------------------------ */
+
+browser.runtime.onMessage.addListener((msg, sender) => {
   if (!msg || typeof msg !== 'object') return undefined;
   switch (msg.type) {
-    case 'sync': return runSync();
+    case 'balance': return safe(() => onBalance(msg.value));
+    case 'overlayInfo': return safe(() => overlayInfo(msg.tiles || []));
+    case 'follow': return safe(() => follow(msg.card, msg.follow !== false));
+    case 'openDashboard': return safe(() => openDashboard(msg.hash || ''));
+    case 'openMarketplace': return safe(() => openMarketplace());
+    case 'popupOpened': return safe(() => clearBadge());
     case 'export': return safe(() => exportToSheets());
     case 'ping': return safe(() => pingScript(msg.sheets));
     case 'importV1': return safe(() => importFromSheet());
     case 'setExcluded': return safe(() => setExcluded(msg.id, !!msg.excluded));
     case 'restore': return safe(() => restoreBackup(msg.backup));
     case 'resetData': return safe(() => resetData());
+    case 'dashboardTab': return safe(() => browser.storage.local.set({ dashboardTab: sender && sender.tab ? sender.tab.id : null }));
     default: return undefined;
   }
 });
 
 async function safe(fn) {
   try {
-    return await fn();
+    const out = await fn();
+    return out === undefined ? { ok: true } : out;
   } catch (e) {
     return { ok: false, error: String((e && e.message) || e) };
   }
+}
+
+async function onBalance(value) {
+  const changed = await withDb((db) => WMStore.addBalance(db, Number(value), Date.now()));
+  return { ok: true, changed };
+}
+
+async function overlayInfo(tiles) {
+  const settings = await getSettings();
+  if (!settings.market.overlay) return { ok: true, enabled: false, items: [] };
+  const db = await loadDb();
+  const match = WMStats.makeMatcher(settings, db);
+  const items = WMMarket.overlayInfo(db, tiles, (card) => !!match(card), Date.now(), settings.market.windowDays, settings.market.dealPct);
+  return { ok: true, enabled: true, items };
+}
+
+async function follow(card, on) {
+  const settings = await getSettings();
+  const key = WMExtract.cardKey(card);
+  const exists = settings.tracking.cards.some((c) => WMExtract.cardKey(c.name) === key);
+  if (on && !exists) settings.tracking.cards.push({ name: String(card), since: '' });
+  if (!on) settings.tracking.cards = settings.tracking.cards.filter((c) => WMExtract.cardKey(c.name) !== key);
+  await browser.storage.local.set({ settings });
+  notifySiteTabs({ type: 'marketUpdated' });
+  return { ok: true };
+}
+
+async function clearBadge() {
+  await withDb((db) => { db.meta.badgeClearedAt = Date.now(); });
+  browser.action.setBadgeText({ text: '' });
+}
+
+/* ------------------------------------------------------------------------ */
+/* Tabs: dashboard reuse, marketplace                                       */
+/* ------------------------------------------------------------------------ */
+
+async function openDashboard(hash) {
+  const url = browser.runtime.getURL('dashboard.html') + (hash ? (hash[0] === '#' ? hash : `#${hash}`) : '');
+  const { dashboardTab } = await browser.storage.local.get('dashboardTab');
+  if (dashboardTab !== undefined && dashboardTab !== null) {
+    try {
+      const tab = await browser.tabs.get(dashboardTab);
+      await browser.tabs.update(tab.id, { active: true, url });
+      await browser.windows.update(tab.windowId, { focused: true });
+      return { ok: true, reused: true };
+    } catch (e) { /* closed: open a new one */ }
+  }
+  const tab = await browser.tabs.create({ url });
+  await browser.storage.local.set({ dashboardTab: tab.id });
+  return { ok: true, reused: false };
+}
+
+/** Brings your marketplace tab to the front, or opens one (a normal page visit). */
+async function openMarketplace() {
+  const tabs = await browser.tabs.query({ url: SITE_MATCH });
+  const market = tabs.find((t) => /\/marketplace(\/|$|\?)/.test(t.url || '')) || null;
+  if (market) {
+    await browser.tabs.update(market.id, { active: true });
+    await browser.windows.update(market.windowId, { focused: true });
+    return { ok: true, reused: true };
+  }
+  await browser.tabs.create({ url: MARKET_PAGE });
+  return { ok: true, reused: false };
 }
 
 /* ------------------------------------------------------------------------ */
@@ -78,264 +277,21 @@ async function resetData() {
     Object.keys(db).forEach((k) => delete db[k]);
     Object.assign(db, WMStore.emptyDb());
   });
-  await browser.storage.local.remove(['lastSync', 'lastResult', 'lastExport']);
+  await browser.storage.local.remove(['lastExport', 'exportState', 'lastResult', 'lastSync', 'syncState']);
   return { ok: true };
-}
-
-/* ------------------------------------------------------------------------ */
-/* Update                                                                   */
-/* ------------------------------------------------------------------------ */
-
-async function runSync() {
-  if (running) return { ok: false, error: 'Une mise à jour est déjà en cours.' };
-  running = true;
-  await browser.storage.local.set({ syncState: { running: true, startedAt: Date.now() } });
-
-  let result;
-  try {
-    const settings = await getSettings();
-    const { data, pages, balance } = await fetchMarketplace();
-    const ex = WMExtract.extract(data);
-    const now = Date.now();
-
-    const { added, warnings } = await withDb((db) => {
-      const before = WMStore.newestTimes(db);
-      const out = WMStore.mergeSync(db, Object.assign({}, ex, { balance }), now);
-      return { added: out, warnings: coverageWarnings(ex, before) };
-    });
-
-    if (balance === null) warnings.push("Le solde de wikibidous n'a pas pu être lu : le patrimoine ne sera pas mis à jour.");
-
-    const db = await loadDb();
-    const model = WMStats.compute(db, settings, now);
-
-    let exported = null;
-    if (WMSettings.sheetsConfigured(settings) && settings.sheets.autoExport) {
-      exported = await exportModel(settings, model).catch((e) => ({ ok: false, error: String((e && e.message) || e) }));
-      if (!exported.ok) warnings.push(`Google Sheets : ${exported.error}`);
-    }
-
-    await browser.storage.local.set({ lastSync: { at: now } });
-    result = {
-      ok: true,
-      finishedAt: now,
-      fetched: { purchases: ex.purchases.length, sales: ex.sales.length, pages },
-      added: {
-        purchases: added.purchases.map((r) => summary(r, model)),
-        sales: added.sales.map((r) => summary(r, model))
-      },
-      balance,
-      kpis: model.kpis,
-      exported: exported ? exported.ok : null,
-      warnings: warnings.concat(model.warnings)
-    };
-  } catch (e) {
-    result = { ok: false, error: String((e && e.message) || e), finishedAt: Date.now() };
-  } finally {
-    running = false;
-  }
-
-  await browser.storage.local.set({ lastResult: result, syncState: { running: false } });
-  updateBadge(result);
-  return result;
-}
-
-function summary(rec, model) {
-  const list = rec.status ? model.sales : model.purchases;
-  const m = list.find((x) => x.id === rec.id) || rec;
-  return {
-    label: rec.label, time: rec.time, card: rec.card, price: rec.price, status: rec.status || null,
-    party: rec.party, tracked: !!m.tracked, profit: m.profit === undefined ? null : m.profit
-  };
-}
-
-/** Warns when the site lists may not reach back to the previous update. */
-function coverageWarnings(ex, before) {
-  const warnings = [];
-  const check = (list, previousNewest, label) => {
-    if (list.length < PAGE_LIMIT || previousNewest === null) return;
-    const oldest = list.reduce((m, it) => Math.min(m, it.time), Infinity);
-    if (oldest > previousNewest) {
-      warnings.push(`La liste des ${label} renvoyée par le site ne remonte pas jusqu'à votre dernière mise à jour : il peut manquer des ${label}. Mettez à jour plus souvent.`);
-    }
-  };
-  check(ex.purchases, before.purchases, 'achats');
-  check(ex.sales, before.sales, 'ventes');
-  return warnings;
-}
-
-function updateBadge(result) {
-  try {
-    if (!result.ok) {
-      browser.action.setBadgeBackgroundColor({ color: '#d03b3b' });
-      browser.action.setBadgeText({ text: '!' });
-      return;
-    }
-    const n = result.added.purchases.length + result.added.sales.length;
-    browser.action.setBadgeBackgroundColor({ color: '#1e7a34' });
-    browser.action.setBadgeText({ text: n ? String(n) : '' });
-  } catch (e) {
-    // Badge is cosmetic.
-  }
-}
-
-/* ------------------------------------------------------------------------ */
-/* Reading wiki-masters.com                                                 */
-/* ------------------------------------------------------------------------ */
-
-async function fetchMarketplace() {
-  const { tab, created } = await getSiteTab();
-  try {
-    const origin = tabOrigin(tab);
-    const merged = { history: new Map(), won: new Map(), auctions: new Map(), selling: [], bidding: [] };
-    let pages = 0;
-    for (let page = 1; page <= MAX_PAGES; page++) {
-      const url = `${origin}/api/marketplace?page=${page}&limit=${PAGE_LIMIT}&sort=recent&mine=1`;
-      const data = await fetchJson(tab, url);
-      pages++;
-      if (!data || !Array.isArray(data.history) || !Array.isArray(data.won)) {
-        throw new Error('Réponse inattendue de wiki-masters.com (pas de listes "history"/"won"). Êtes-vous connecté ?');
-      }
-      if (page === 1) {
-        merged.selling = Array.isArray(data.selling) ? data.selling : [];
-        merged.bidding = Array.isArray(data.bidding) ? data.bidding : [];
-      }
-      let added = 0;
-      for (const a of data.history) if (a && a.id && !merged.history.has(a.id)) { merged.history.set(a.id, a); added++; }
-      for (const a of data.won) if (a && a.id && !merged.won.has(a.id)) { merged.won.set(a.id, a); added++; }
-      for (const a of data.auctions || []) if (a && a.id) merged.auctions.set(a.id, a);
-      const full = data.history.length >= PAGE_LIMIT || data.won.length >= PAGE_LIMIT;
-      if (!added || !full) break; // the site ignores "page" for these lists, or there is nothing older
-    }
-    const balance = await readBalance(tab);
-    return {
-      data: {
-        history: [...merged.history.values()],
-        won: [...merged.won.values()],
-        auctions: [...merged.auctions.values()],
-        selling: merged.selling,
-        bidding: merged.bidding
-      },
-      pages,
-      balance
-    };
-  } finally {
-    if (created) browser.tabs.remove(tab.id).catch(() => {});
-  }
-}
-
-function tabOrigin(tab) {
-  try {
-    const u = new URL(tab.url);
-    if (/(^|\.)wiki-masters\.com$/.test(u.hostname)) return u.origin;
-  } catch (e) { /* fall through */ }
-  return SITE_ORIGIN;
-}
-
-/** Uses an open wiki-masters.com tab, or opens one in the background. */
-async function getSiteTab() {
-  const tabs = await browser.tabs.query({ url: SITE_MATCH });
-  const usable = tabs.filter((t) => !t.discarded);
-  const tab = usable.find((t) => t.status === 'complete') || usable[0];
-  if (tab) return { tab, created: false };
-
-  const createdTab = await browser.tabs.create({ url: `${SITE_ORIGIN}/marketplace`, active: false });
-  await waitForTabComplete(createdTab.id);
-  return { tab: await browser.tabs.get(createdTab.id), created: true };
-}
-
-function waitForTabComplete(tabId) {
-  return new Promise((resolve, reject) => {
-    let done = false;
-    const finish = (err) => {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      browser.tabs.onUpdated.removeListener(listener);
-      if (err) reject(err); else resolve();
-    };
-    const listener = (id, info) => {
-      if (id === tabId && info.status === 'complete') finish();
-    };
-    const timer = setTimeout(() => finish(new Error('wiki-masters.com met trop de temps à charger.')), TAB_LOAD_TIMEOUT_MS);
-    browser.tabs.onUpdated.addListener(listener);
-    browser.tabs.get(tabId).then((t) => { if (t.status === 'complete') finish(); }).catch(finish);
-  });
-}
-
-/**
- * Runs inside the wiki-masters.com page, exactly like the site's own request
- * (same origin, your login cookies). Must stay self-contained.
- */
-function pageFetch(url) {
-  return fetch(url, { credentials: 'include', headers: { Accept: 'application/json' } })
-    .then((r) => r.text().then((t) => JSON.stringify({ status: r.status, text: t })))
-    .catch((e) => JSON.stringify({ status: 0, text: String(e) }));
-}
-
-/**
- * Runs inside the page: reads the wikibidous balance from a fresh copy of the
- * page (server-rendered "initialWikibidousBalance"), or from the header button.
- */
-function pageBalance() {
-  const fromDom = () => {
-    const el = document.querySelector('[title*="wikibidous" i]');
-    const m = el && String(el.getAttribute('title')).match(/(\d[\d\s  .]*)\s*wikibidous/i);
-    return m ? Number(m[1].replace(/\D/g, '')) : null;
-  };
-  return fetch('/marketplace', { credentials: 'include' })
-    .then((r) => r.text())
-    .then((t) => {
-      const m = t.match(/initialWikibidousBalance\\?"\s*:\s*(\d+)/);
-      return m ? Number(m[1]) : fromDom();
-    })
-    .catch(() => fromDom());
-}
-
-async function readBalance(tab) {
-  try {
-    const results = await browser.scripting.executeScript({ target: { tabId: tab.id }, world: 'MAIN', func: pageBalance });
-    const v = results && results[0] && results[0].result;
-    return typeof v === 'number' && isFinite(v) ? v : null;
-  } catch (e) {
-    return null;
-  }
-}
-
-async function fetchJson(tab, url) {
-  let status;
-  let text;
-  try {
-    const results = await browser.scripting.executeScript({
-      target: { tabId: tab.id },
-      world: 'MAIN',
-      func: pageFetch,
-      args: [url]
-    });
-    const r = results && results[0] && results[0].result;
-    if (typeof r !== 'string') throw new Error('no result from page');
-    ({ status, text } = JSON.parse(r));
-    if (status === 0) throw new Error(text);
-  } catch (e) {
-    // Fallback: request from the extension itself (also sends your cookies).
-    const resp = await fetch(url, { credentials: 'include', headers: { Accept: 'application/json' } });
-    status = resp.status;
-    text = await resp.text();
-  }
-  if (status === 401 || status === 403) {
-    throw new Error(`wiki-masters.com a refusé la demande (HTTP ${status}). Connectez-vous sur le site puis réessayez.`);
-  }
-  if (status < 200 || status >= 300) throw new Error(`wiki-masters.com a répondu HTTP ${status}.`);
-  try {
-    return JSON.parse(text);
-  } catch (e) {
-    throw new Error('Réponse inattendue de wiki-masters.com (pas du JSON). Êtes-vous connecté ?');
-  }
 }
 
 /* ------------------------------------------------------------------------ */
 /* Google Sheets (optional)                                                 */
 /* ------------------------------------------------------------------------ */
+
+function scheduleAutoExport() {
+  clearTimeout(exportTimer);
+  exportTimer = setTimeout(async () => {
+    const settings = await getSettings();
+    if (WMSettings.sheetsConfigured(settings) && settings.sheets.autoExport) exportToSheets().catch(() => {});
+  }, AUTO_EXPORT_DELAY_MS);
+}
 
 async function callScript(sheets, payload) {
   const url = String((sheets && sheets.scriptUrl) || '').trim();
@@ -366,18 +322,43 @@ async function callScript(sheets, payload) {
   return json;
 }
 
-async function exportModel(settings, model) {
-  const tables = WMTables.build(model);
-  const res = await callScript(settings.sheets, { action: 'write', version: 2, tables });
-  await browser.storage.local.set({ lastExport: { at: Date.now(), spreadsheet: res.spreadsheet || '' } });
-  return Object.assign({ ok: true }, res);
+async function setExportState(state) {
+  await browser.storage.local.set({ exportState: Object.assign({ at: Date.now() }, state) });
 }
 
+/** One request per tab, so the progress can be shown ("Remplissage de l'onglet Achats…"). */
 async function exportToSheets() {
+  if (exporting) throw new Error('Un export est déjà en cours.');
   const settings = await getSettings();
   if (!WMSettings.sheetsConfigured(settings)) throw new Error("Renseignez l'URL et le secret Google Sheets dans les paramètres.");
-  const model = WMStats.compute(await loadDb(), settings, Date.now());
-  return exportModel(settings, model);
+  exporting = true;
+  try {
+    await setExportState({ running: true, step: 0, total: 0, label: 'Préparation des données…' });
+    const model = WMStats.compute(await loadDb(), settings, Date.now());
+    const tables = WMTables.build(model);
+    const warnings = [];
+    let spreadsheet = '';
+    for (let i = 0; i < tables.length; i++) {
+      const t = tables[i];
+      await setExportState({
+        running: true, step: i + 1, total: tables.length,
+        label: `Remplissage de l'onglet « ${t.name} » (${i + 1}/${tables.length}, ${t.rows.length} ligne${t.rows.length > 1 ? 's' : ''})…`
+      });
+      const res = await callScript(settings.sheets, { action: 'write', version: 2, index: i, tables: [t] });
+      spreadsheet = res.spreadsheet || spreadsheet;
+      (res.warnings || []).forEach((w) => warnings.push(w));
+    }
+    const done = { running: false, ok: true, step: tables.length, total: tables.length, spreadsheet, warnings, label: `Feuille « ${spreadsheet} » à jour (${tables.length} onglets).` };
+    await setExportState(done);
+    await browser.storage.local.set({ lastExport: { at: Date.now(), spreadsheet } });
+    return Object.assign({ ok: true, written: tables.map((t) => t.name) }, done);
+  } catch (e) {
+    const msg = String((e && e.message) || e);
+    await setExportState({ running: false, ok: false, label: `Échec de l'export : ${msg}` });
+    throw e;
+  } finally {
+    exporting = false;
+  }
 }
 
 async function pingScript(override) {
@@ -399,3 +380,6 @@ async function importFromSheet() {
   }
   return Object.assign({ ok: true, addedCards, sheets: res.sheets || [] }, summary);
 }
+
+// For the Node tests.
+globalThis.__wmt = { ingest, onApiRequest };

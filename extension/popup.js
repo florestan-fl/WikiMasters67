@@ -1,4 +1,4 @@
-/* global browser, WMStore, WMStats, WMSettings, WMTime, WMFormat */
+/* global browser, WMStore, WMSettings, WMTime, WMFormat */
 'use strict';
 
 const ORIGINS = [
@@ -7,38 +7,47 @@ const ORIGINS = [
   'https://script.google.com/*',
   'https://script.googleusercontent.com/*'
 ];
+const SITE_MATCH = ['https://www.wiki-masters.com/*', 'https://wiki-masters.com/*'];
 
 const F = WMFormat;
 const $ = (id) => document.getElementById(id);
 
-async function init() {
-  $('open-options').addEventListener('click', openOptions);
-  $('open-options-2').addEventListener('click', openOptions);
-  $('grant').addEventListener('click', grant);
-  $('sync').addEventListener('click', sync);
-  $('dashboard').addEventListener('click', () => {
-    browser.tabs.create({ url: browser.runtime.getURL('dashboard.html') });
+function ago(t) {
+  if (!t) return 'jamais';
+  const min = Math.round((Date.now() - t) / 60000);
+  if (min < 1) return "à l'instant";
+  if (min < 60) return `il y a ${min} min`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `il y a ${h} h${min % 60 ? ` ${String(min % 60).padStart(2, '0')}` : ''}`;
+  const d = Math.floor(h / 24);
+  return `il y a ${d} jour${d > 1 ? 's' : ''}`;
+}
+
+function go(msg) {
+  return async () => {
+    await browser.runtime.sendMessage(msg);
     window.close();
+  };
+}
+
+async function init() {
+  $('open-settings').addEventListener('click', go({ type: 'openDashboard', hash: '#settings' }));
+  $('dashboard').addEventListener('click', go({ type: 'openDashboard', hash: '#overview' }));
+  $('market').addEventListener('click', go({ type: 'openDashboard', hash: '#market' }));
+  $('marketplace').addEventListener('click', go({ type: 'openMarketplace' }));
+  $('grant').addEventListener('click', grant);
+  $('export').addEventListener('click', async () => {
+    $('export').disabled = true;
+    await browser.runtime.sendMessage({ type: 'export' });
+    $('export').disabled = false;
   });
 
   browser.storage.onChanged.addListener((changes, area) => {
-    if (area !== 'local') return;
-    if (changes.syncState) renderState(changes.syncState.newValue);
-    if (changes.lastResult) renderResult(changes.lastResult.newValue);
-    if (changes.db || changes.settings || changes.lastSync || changes.lastExport) refresh();
+    if (area === 'local' && (changes.db || changes.settings || changes.exportState || changes.lastExport)) render();
   });
-
-  const { syncState, lastResult } = await browser.storage.local.get(['syncState', 'lastResult']);
+  browser.runtime.sendMessage({ type: 'popupOpened' }).catch(() => {});
   await checkPermissions();
-  renderState(syncState);
-  renderResult(lastResult);
-  await refresh();
-}
-
-function openOptions(e) {
-  e.preventDefault();
-  browser.runtime.openOptionsPage();
-  window.close();
+  await render();
 }
 
 async function checkPermissions() {
@@ -55,74 +64,81 @@ async function grant() {
   }
 }
 
-async function sync() {
-  if (!(await checkPermissions())) return;
-  renderState({ running: true });
-  try {
-    await browser.runtime.sendMessage({ type: 'sync' });
-  } catch (e) {
-    renderResult({ ok: false, error: String((e && e.message) || e) });
-    renderState({ running: false });
+function item(state, title, detail) {
+  return F.el('li', null,
+    F.el('span', { class: `dot ${state}`, 'aria-hidden': 'true' }),
+    F.el('div', null, F.el('div', { class: 'title', text: title }), detail ? F.el('div', { class: 'detail', text: detail }) : null));
+}
+
+async function render() {
+  const data = await browser.storage.local.get(['db', 'settings', 'exportState', 'lastExport']);
+  const db = WMStore.normalizeDb(data.db || WMStore.emptyDb());
+  const settings = WMSettings.normalize(data.settings);
+  const meta = db.meta;
+  let siteTabs = [];
+  try { siteTabs = await browser.tabs.query({ url: SITE_MATCH }); } catch (e) { /* no permission */ }
+
+  const status = $('status');
+  status.textContent = '';
+
+  // 1. Capture.
+  const open = siteTabs.length > 0;
+  const ownAge = meta.lastOwnCapture ? Date.now() - meta.lastOwnCapture : Infinity;
+  const stale = ownAge > 2 * 86400000;
+  status.append(item(
+    meta.captureError ? 'err' : stale ? 'warn' : 'ok',
+    meta.lastOwnCapture ? `Vos transactions : relevées ${ago(meta.lastOwnCapture)}` : 'Vos transactions : pas encore relevées',
+    meta.captureError ? `Erreur de lecture : ${meta.captureError.text}`
+      : stale ? 'Ouvrez le Marché de WikiMasters (au moins tous les 2 jours) pour ne rien manquer.'
+        : `${Object.keys(db.purchases).length} achats et ${Object.keys(db.sales).length} mises en vente enregistrés.`
+  ));
+
+  // 2. Market data.
+  const auctions = Object.keys(db.auctions || {}).length;
+  status.append(item(
+    meta.lastCapture ? 'ok' : '',
+    meta.lastCapture ? `Prix du marché : dernières données ${ago(meta.lastCapture)}` : 'Prix du marché : pas encore de données',
+    `${auctions} enchère(s) en mémoire${open ? ` · ${siteTabs.length} onglet(s) WikiMasters ouvert(s)` : ' · aucun onglet WikiMasters ouvert'}`
+  ));
+
+  // 3. Balance.
+  const snap = db.snapshots[db.snapshots.length - 1];
+  status.append(item(snap ? 'ok' : '', snap ? `Solde : ${F.wUnit(snap.balance)}` : 'Solde : pas encore lu',
+    snap ? `Lu ${ago(snap.t)} sur la page du jeu` : 'Il est lu sur n\'importe quelle page du jeu.'));
+
+  // 4. Google Sheets.
+  const ex = data.exportState;
+  if (WMSettings.sheetsConfigured(settings)) {
+    $('export').hidden = false;
+    $('export').disabled = !!(ex && ex.running);
+    if (ex && ex.running) status.append(item('warn', 'Google Sheets : export en cours', ex.label));
+    else if (ex && ex.ok === false) status.append(item('err', 'Google Sheets : échec du dernier export', ex.label));
+    else status.append(item(data.lastExport ? 'ok' : '', data.lastExport ? `Google Sheets : à jour ${ago(data.lastExport.at)}` : 'Google Sheets : jamais exporté',
+      settings.sheets.autoExport ? 'Export automatique après chaque nouvelle transaction.' : 'Export manuel.'));
+  } else {
+    $('export').hidden = true;
   }
-}
 
-async function refresh() {
-  const { db, settings, lastSync, lastExport } = await browser.storage.local.get(['db', 'settings', 'lastSync', 'lastExport']);
-  const s = WMSettings.normalize(settings);
-  $('no-cards').hidden = !!(s.tracking.cards.length || s.tracking.categories.length);
-  const m = WMStats.compute(WMStore.normalizeDb(db || WMStore.emptyDb()), s, Date.now());
-  const k = m.kpis;
-  const tiles = $('tiles');
-  tiles.textContent = '';
-  tiles.append(
-    F.tile("Profit réalisé aujourd'hui", F.signedUnit(k.realizedToday), `7 jours : ${F.signedUnit(k.realized7)}`, F.signClass(k.realizedToday)),
-    F.tile("Trading estimé aujourd'hui", F.signedUnit(k.tradingToday), `Moyenne 7 j : ${F.signedUnit(k.tradingPerDay7)}/jour`, F.signClass(k.tradingToday)),
-    F.tile('Valeur du stock', F.wUnit(k.stockValue), `${k.stockQty} carte(s) · latent ${F.signedUnit(k.unrealized)}`),
-    F.tile('Patrimoine estimé', F.wUnit(k.netWorth), k.balance === null ? 'Solde pas encore relevé' : `Solde ${F.wUnit(k.balance)} + stock`)
-  );
-  const parts = [lastSync && lastSync.at ? `Dernière mise à jour : ${WMTime.formatDateTime(lastSync.at)}` : 'Jamais mis à jour.'];
-  if (WMSettings.sheetsConfigured(s)) {
-    parts.push(lastExport && lastExport.at ? `Export Sheets : ${WMTime.formatDateTime(lastExport.at)}` : 'Export Sheets : jamais');
+  // Notices.
+  const notices = $('notices');
+  notices.textContent = '';
+  if (meta.warning && Date.now() - meta.warning.t < 3 * 86400000) notices.append(F.el('div', { class: 'notice warn', text: meta.warning.text }));
+  if (!settings.tracking.cards.length && !settings.tracking.categories.length) {
+    notices.append(F.el('div', { class: 'notice warn', text: "Aucune carte suivie : choisissez vos cartes dans les paramètres, ou cliquez « + Suivre » sous une enchère sur le site." }));
   }
-  $('footer').textContent = parts.join(' · ');
-}
 
-function renderState(state) {
-  const busy = !!(state && state.running);
-  $('sync').disabled = busy;
-  $('status').textContent = busy ? 'Mise à jour en cours…' : '';
-}
-
-function renderResult(r) {
-  const box = $('result');
+  // Recent additions.
+  const recent = (meta.recent || []).slice(-6).reverse();
+  const box = $('recent');
   box.textContent = '';
-  if (!r) return;
-  if (!r.ok) {
-    box.append(F.el('div', { class: 'notice err', text: r.error || 'Erreur inconnue.' }));
-    return;
-  }
-  const np = r.added.purchases.length;
-  const ns = r.added.sales.length;
-  const head = np + ns
-    ? `${np} achat(s) et ${ns} vente(s) ajoutés.`
-    : 'Rien de nouveau depuis la dernière mise à jour.';
-  const exp = r.exported === true ? ' Feuille Google mise à jour.' : '';
-  box.append(F.el('div', { class: 'small secondary', text: `${WMTime.formatDateTime(r.finishedAt)} · ${head}${exp}` }));
-  for (const w of r.warnings || []) box.append(F.el('div', { class: 'notice warn', text: w }));
-
-  const rows = r.added.purchases.map((x) => Object.assign({ kind: 'Achat' }, x))
-    .concat(r.added.sales.map((x) => Object.assign({ kind: x.status === 'Vendue' ? 'Vente' : 'Invendu' }, x)))
-    .sort((a, b) => b.time - a.time);
-  if (rows.length) {
-    box.append(F.el('div', { class: 'added' },
+  if (recent.length) {
+    box.append(F.el('div', { class: 'small secondary', text: 'Dernières transactions enregistrées' }),
       F.table([
-        { label: 'Date', value: (x) => WMTime.formatDateTime(x.time), cls: () => 'nowrap' },
-        { label: 'Type', value: (x) => x.kind },
-        { label: 'Carte', value: (x) => x.card },
-        { label: 'Prix', value: (x) => x.price, format: F.w, num: true },
-        { label: 'Profit', value: (x) => x.profit, format: (v) => (v === null || v === undefined ? '' : F.signed(v)), num: true, cls: (x, v) => F.signClass(v) }
-      ], rows, { maxHeight: '200px', rowClass: (x) => (x.tracked ? null : 'dim') }),
-      F.el('div', { class: 'small muted', text: 'En gris : cartes non suivies.' })));
+        { label: 'Date', value: (r) => WMTime.formatDateTime(r.time), cls: () => 'nowrap' },
+        { label: 'Type', value: (r) => (r.status ? (r.status === 'Vendue' ? 'Vente' : 'Invendu') : 'Achat') },
+        { label: 'Carte', value: (r) => r.card },
+        { label: 'Prix', value: (r) => r.price, format: F.w, num: true }
+      ], recent, { maxHeight: '170px' }));
   }
 }
 

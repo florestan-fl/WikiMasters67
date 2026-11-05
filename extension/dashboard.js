@@ -1,14 +1,19 @@
-/* global browser, WMExtract, WMStore, WMStats, WMSettings, WMTime, WMFormat, WMCharts */
+/* global browser, WMExtract, WMStore, WMMarket, WMStats, WMSettings, WMTime, WMFormat, WMCharts */
 'use strict';
 
 const F = WMFormat;
 const C = WMCharts;
 const $ = (id) => document.getElementById(id);
+const TABS = ['overview', 'market', 'cards', 'hours', 'prices', 'stock', 'tx', 'settings'];
 
 const state = {
+  db: null,
   model: null,
   settings: null,
   tab: 'overview',
+  marketKey: null,
+  marketScope: 'tracked',
+  marketSearch: '',
   periodDays: 30,
   priceCard: '',
   txKind: 'purchases',
@@ -19,65 +24,72 @@ const state = {
 /* ------------------------------------------------------------------ data */
 
 async function load() {
-  const data = await browser.storage.local.get(['db', 'settings', 'lastSync', 'lastExport', 'syncState']);
+  const data = await browser.storage.local.get(['db', 'settings', 'lastExport', 'exportState']);
   state.settings = WMSettings.normalize(data.settings);
-  state.model = WMStats.compute(WMStore.normalizeDb(data.db || WMStore.emptyDb()), state.settings, Date.now());
+  state.db = WMStore.normalizeDb(data.db || WMStore.emptyDb());
+  state.model = WMStats.compute(state.db, state.settings, Date.now());
   $('export').hidden = !WMSettings.sheetsConfigured(state.settings);
-  const parts = [data.lastSync && data.lastSync.at ? `Dernière mise à jour : ${WMTime.formatDateTime(data.lastSync.at)}` : 'Jamais mis à jour'];
-  if (data.lastExport && data.lastExport.at) parts.push(`export Google Sheets : ${WMTime.formatDateTime(data.lastExport.at)}`);
+  const meta = state.db.meta;
+  const parts = [meta.lastOwnCapture ? `Transactions relevées le ${WMTime.formatDateTime(meta.lastOwnCapture)}` : 'Transactions pas encore relevées : ouvrez le Marché de WikiMasters'];
+  if (meta.lastCapture) parts.push(`prix du marché : ${WMTime.formatDateTime(meta.lastCapture)}`);
+  if (data.lastExport && data.lastExport.at) parts.push(`Google Sheets : ${WMTime.formatDateTime(data.lastExport.at)}`);
   $('updated').textContent = parts.join(' · ');
-  setBusy(data.syncState && data.syncState.running);
+  renderExportState(data.exportState);
   render();
 }
 
 let reloadTimer = null;
 browser.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local') return;
-  if (changes.syncState) setBusy(changes.syncState.newValue && changes.syncState.newValue.running);
-  if (changes.db || changes.settings || changes.lastSync || changes.lastExport) {
+  if (changes.exportState) renderExportState(changes.exportState.newValue);
+  if (changes.db || changes.settings || changes.lastExport) {
     clearTimeout(reloadTimer);
-    reloadTimer = setTimeout(load, 150);
+    reloadTimer = setTimeout(load, 300);
   }
 });
 
-function setBusy(busy) {
-  $('sync').disabled = !!busy;
-  $('sync').textContent = busy ? 'Mise à jour…' : 'Mettre à jour';
-}
-
-function status(kind, text) {
-  const box = $('status');
+function renderExportState(ex) {
+  const box = $('export-state');
   box.textContent = '';
-  if (text) box.append(F.el('div', { class: `notice ${kind}`, text }));
+  $('export').disabled = !!(ex && ex.running);
+  $('export').textContent = ex && ex.running ? 'Export en cours…' : 'Envoyer vers Google Sheets';
+  if (!ex) return;
+  const recent = Date.now() - (ex.at || 0) < 2 * 60000;
+  if (!ex.running && !recent) return;
+  const kind = ex.running ? 'ok' : ex.ok ? 'ok' : 'err';
+  const lines = [ex.label].concat(ex.ok && ex.warnings && ex.warnings.length ? ex.warnings : []);
+  const n = F.el('div', { class: `notice ${kind}`, text: lines.join('\n') });
+  if (ex.running && ex.total) {
+    n.append(F.el('div', { class: 'progress' }, F.el('div', { style: `width:${Math.round(100 * Math.max(0, ex.step - 0.5) / ex.total)}%` })));
+  }
+  box.append(n);
 }
 
-$('sync').addEventListener('click', async () => {
-  setBusy(true);
-  status('', '');
-  const r = await browser.runtime.sendMessage({ type: 'sync' });
-  if (!r || !r.ok) status('err', (r && r.error) || 'Erreur inconnue.');
-  else status('ok', `${r.added.purchases.length} achat(s) et ${r.added.sales.length} vente(s) ajoutés.${r.exported ? ' Feuille Google mise à jour.' : ''}`);
+$('export').addEventListener('click', () => {
+  browser.runtime.sendMessage({ type: 'export' }).catch(() => {});
 });
 
-$('export').addEventListener('click', async () => {
-  $('export').disabled = true;
-  status('ok', 'Envoi vers Google Sheets…');
-  const r = await browser.runtime.sendMessage({ type: 'export' });
-  $('export').disabled = false;
-  if (!r || !r.ok) status('err', `Échec de l'export : ${(r && r.error) || 'pas de réponse'}`);
-  else status('ok', `Feuille « ${r.spreadsheet} » mise à jour.`);
+$('go-market').addEventListener('click', () => {
+  browser.runtime.sendMessage({ type: 'openMarketplace' }).catch(() => {});
 });
 
-/* ------------------------------------------------------------------ tabs */
+/* --------------------------------------------------------------- routing */
 
-document.querySelectorAll('.tabs [data-tab]').forEach((b) => {
-  b.addEventListener('click', () => {
-    state.tab = b.dataset.tab;
-    document.querySelectorAll('.tabs [data-tab]').forEach((x) => x.setAttribute('aria-selected', String(x === b)));
-    document.querySelectorAll('[data-panel]').forEach((p) => { p.hidden = p.dataset.panel !== state.tab; });
-    render();
-  });
-});
+// Same tab for everything: #overview, #market, #market/<card>, #settings…
+function route() {
+  const [tab, ...rest] = location.hash.replace(/^#/, '').split('/');
+  state.tab = TABS.includes(tab) ? tab : 'overview';
+  state.marketKey = state.tab === 'market' && rest.length ? decodeURIComponent(rest.join('/')) : null;
+  document.querySelectorAll('.tabs [data-tab]').forEach((x) => x.setAttribute('aria-selected', String(x.dataset.tab === state.tab)));
+  document.querySelectorAll('[data-panel]').forEach((p) => { p.hidden = p.dataset.panel !== state.tab; });
+  document.title = `${document.querySelector(`.tabs [data-tab="${state.tab}"]`).textContent} · WikiMasters Trading`;
+  render();
+  if (state.marketKey) window.scrollTo({ top: 0 });
+}
+window.addEventListener('hashchange', route);
+
+// Lets the extension bring this tab back instead of opening a new one.
+browser.runtime.sendMessage({ type: 'dashboardTab' }).catch(() => {});
 
 function segmented(id, attr, onPick) {
   $(id).querySelectorAll('button').forEach((b) => {
@@ -89,21 +101,125 @@ function segmented(id, attr, onPick) {
 }
 segmented('period', 'days', (v) => { state.periodDays = Number(v); render(); });
 segmented('tx-kind', 'kind', (v) => { state.txKind = v; render(); });
+segmented('market-scope', 'scope', (v) => { state.marketScope = v; render(); });
 $('tx-search').addEventListener('input', (e) => { state.txSearch = e.target.value; render(); });
+$('market-search').addEventListener('input', (e) => { state.marketSearch = e.target.value; render(); });
 $('tx-tracked').addEventListener('change', (e) => { state.txTrackedOnly = e.target.checked; render(); });
 $('price-card').addEventListener('change', (e) => { state.priceCard = e.target.value; render(); });
 
 function render() {
   if (!state.model) return;
   renderWarnings();
+  if (state.tab === 'settings') return; // handled by settings-panel.js
   C.destroyAll();
-  ({ overview, cards: renderCards, hours: renderHours, prices: renderPrices, stock: renderStock, tx: renderTx })[state.tab]();
+  ({ overview, market: renderMarket, cards: renderCards, hours: renderHours, prices: renderPrices, stock: renderStock, tx: renderTx })[state.tab]();
 }
 
 function renderWarnings() {
   const box = $('warnings');
   box.textContent = '';
+  if (state.tab === 'settings') return;
+  const meta = state.db.meta;
+  if (meta.warning && Date.now() - meta.warning.t < 3 * 86400000) box.append(F.el('div', { class: 'notice warn', text: meta.warning.text }));
   state.model.warnings.forEach((w) => box.append(F.el('div', { class: 'notice warn', text: w })));
+}
+
+/* ---------------------------------------------------------------- market */
+
+function marketRows() {
+  const all = WMMarket.allStats(state.db, Date.now(), state.settings.market.windowDays);
+  const match = WMStats.makeMatcher(state.settings, state.db);
+  let rows = Object.keys(all).map((k) => Object.assign({ tracked: !!match(all[k].card.replace(/ ✦$/, '')) }, all[k]));
+  if (state.marketScope === 'tracked') rows = rows.filter((r) => r.tracked);
+  const q = WMExtract.cardKey(state.marketSearch);
+  if (q) rows = rows.filter((r) => r.key.includes(q));
+  return { all, rows: rows.sort((a, b) => b.n - a.n || a.card.localeCompare(b.card, 'fr')) };
+}
+
+function maxBuy(median) {
+  if (median === null || median === undefined) return null;
+  const v = state.settings.valuation;
+  return median * (1 - v.commissionPct / 100) / (1 + v.targetMarginPct / 100);
+}
+
+function follow(card, on) {
+  return browser.runtime.sendMessage({ type: 'follow', card: card.replace(/ ✦$/, ''), follow: on });
+}
+
+function renderMarket() {
+  const { all, rows } = marketRows();
+  const detail = $('market-detail');
+  detail.textContent = '';
+  if (state.marketKey) {
+    const s = all[state.marketKey];
+    if (s) detail.append(marketDetail(s));
+    else detail.append(F.el('div', { class: 'notice warn', text: "Pas encore de données pour cette carte : parcourez le Marché pour en recueillir." }));
+  }
+
+  const box = $('market-table');
+  box.textContent = '';
+  if (!rows.length) {
+    box.append(F.el('p', { class: 'muted', text: state.marketScope === 'tracked'
+      ? 'Aucune donnée pour vos cartes suivies. Parcourez le Marché de WikiMasters (ou recherchez une carte) pour recueillir des prix.'
+      : 'Aucune donnée de marché pour l\'instant.' }));
+    return;
+  }
+  const trend = (v) => (v === null || v === undefined ? '–' : `${v > 0 ? '+' : ''}${F.pct(v)}`);
+  box.append(F.table([
+    { label: 'Carte', value: (r) => F.el('span', null, r.card, r.rarity ? F.el('span', { class: 'tag', text: r.rarity }) : null) },
+    { label: 'Médiane', value: (r) => r.median, format: F.w, num: true },
+    { label: 'Ventes', title: 'Ventes observées sur la période (dont les vôtres)', value: (r) => `${r.n}${r.nOwn ? ` (${r.nOwn})` : ''}`, num: true },
+    { label: 'P25 – P75', value: (r) => (r.p25 === null ? '–' : `${F.w(r.p25)} – ${F.w(r.p75)}`), num: true },
+    { label: 'Min / Max', value: (r) => (r.min === null ? '–' : `${F.w(r.min)} / ${F.w(r.max)}`), num: true },
+    { label: 'Tendance 7 j', value: (r) => trend(r.trend7), num: true, cls: (r) => F.signClass(r.trend7) },
+    { label: 'Tendance 30 j', value: (r) => trend(r.trend30), num: true, cls: (r) => F.signClass(r.trend30) },
+    { label: 'Moins chère en vente', value: (r) => r.lowestAsk, format: F.w, num: true },
+    { label: 'Annonces', value: (r) => r.asks, num: true },
+    { label: 'Achat max conseillé', title: `Médiane ÷ (1 + marge visée de ${state.settings.valuation.targetMarginPct} %)`, value: (r) => maxBuy(r.median), format: F.w, num: true },
+    { label: '', value: (r) => F.el('button', { class: 'link', text: r.tracked ? 'Ne plus suivre' : '+ Suivre',
+      onclick: (e) => { e.stopPropagation(); follow(r.card, !r.tracked); } }) }
+  ], rows.slice(0, 500), {
+    rowClass: (r) => `clickable${r.key === state.marketKey ? ' selected' : ''}`,
+    onRowClick: (r) => { location.hash = `#market/${encodeURIComponent(r.key)}`; }
+  }));
+}
+
+function marketDetail(s) {
+  const tracked = !!WMStats.makeMatcher(state.settings, state.db)(s.card.replace(/ ✦$/, ''));
+  const trend = (v) => (v === null || v === undefined ? '–' : `${v > 0 ? '+' : ''}${F.pct(v)}`);
+  const wrap = F.el('div', { class: 'card market-detail' },
+    F.el('div', { class: 'head' },
+      F.el('h2', null, s.card, s.rarity ? F.el('span', { class: 'tag', text: s.rarity }) : null),
+      F.el('div', { class: 'buttons' },
+        F.el('button', { text: tracked ? 'Ne plus suivre' : '+ Suivre', onclick: () => follow(s.card, !tracked) }),
+        F.el('a', { class: 'button', href: '#market', text: '✕', title: 'Fermer', 'aria-label': 'Fermer' }))),
+    F.el('div', { class: 'tiles' },
+      F.tile('Médiane des ventes', F.wUnit(s.median), `${s.n} vente(s) sur ${state.settings.market.windowDays} j${s.nOwn ? `, dont ${s.nOwn} à vous` : ''}`),
+      F.tile('Achat max conseillé', F.wUnit(maxBuy(s.median)), `Marge visée ${state.settings.valuation.targetMarginPct} %`),
+      F.tile('P25 – P75', s.p25 === null ? '–' : `${F.w(s.p25)} – ${F.w(s.p75)}`, 'La moitié des ventes est dans cette fourchette'),
+      F.tile('Min / Max', s.min === null ? '–' : `${F.w(s.min)} / ${F.w(s.max)}`),
+      F.tile('Tendance 7 j', trend(s.trend7), 'Médiane 7 j vs 8–30 j', F.signClass(s.trend7)),
+      F.tile('Tendance 30 j', trend(s.trend30), 'Médiane 30 j vs 31–90 j', F.signClass(s.trend30)),
+      F.tile('Moins chère en vente', F.wUnit(s.lowestAsk), `${s.asks} annonce(s) vue(s) récemment`)),
+    F.el('figure', { class: 'chart' },
+      F.el('figcaption', null, F.el('h3', { text: 'Prix des ventes observées et médiane journalière' }),
+        F.el('span', { class: 'small muted', text: `${state.settings.market.windowDays} derniers jours (W)` })),
+      F.el('div', { class: 'chart-box' }, F.el('canvas', { id: 'c-market' }), F.el('div', { class: 'chart-empty muted', hidden: true, text: 'Aucune vente observée sur la période.' }))));
+
+  setTimeout(() => {
+    const daily = WMMarket.dailyMedians(s.sales);
+    C.render('c-market', {
+      type: 'scatter', unit: 'W', xType: 'linear',
+      xTicks: { callback: (v) => WMTime.formatDay(WMTime.dayKey(v)).slice(0, 5), maxTicksLimit: 8 },
+      tooltipTitle: (items) => (items.length ? WMTime.formatDateTime(items[0].parsed.x) : ''),
+      datasets: [
+        { label: 'Ventes des autres joueurs', data: s.sales.filter((x) => !x.own).map((x) => ({ x: x.t, y: x.price })), slot: 0 },
+        { label: 'Vos ventes', data: s.sales.filter((x) => x.own).map((x) => ({ x: x.t, y: x.price })), slot: 1, pointStyle: 'triangle' },
+        { label: 'Médiane journalière', data: daily.map((d) => ({ x: d.t, y: d.median })), slot: 2, line: true }
+      ]
+    });
+  }, 0);
+  return wrap;
 }
 
 /** Stable colour slot per card: order of the tracked list, then alphabetical. */
@@ -406,4 +522,5 @@ function renderTx() {
   box.append(F.table(cols, rows, { rowClass: (r) => (r.tracked ? null : 'dim') }));
 }
 
+route();
 load();

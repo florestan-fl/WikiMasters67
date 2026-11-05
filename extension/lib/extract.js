@@ -155,7 +155,10 @@
     return { me: me, purchases: purchases, sales: sales, selling: selling, asks: asks, cards: cards };
   }
 
-  var api = { toMs: toMs, cardKey: cardKey, extract: extract, SOLD: SOLD, UNSOLD: UNSOLD };
+  var api = {
+    toMs: toMs, cardKey: cardKey, cardName: cardName, rarityOf: rarity, num: num, extract: extract,
+    SOLD: SOLD, UNSOLD: UNSOLD
+  };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.WMExtract = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
