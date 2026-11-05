@@ -116,6 +116,16 @@ class FakeRange {
   }
   setValue(v) { return this.setValues([[v]]); }
   setFormula(f) { const cell = this.sheet.cell(this.row, this.col); cell.f = f; cell.v = ''; return this; }
+  _each(fn) {
+    for (let r = 0; r < this.nr; r++) for (let c = 0; c < this.nc; c++) fn(this.sheet.cell(this.row + r, this.col + c));
+    return this;
+  }
+  setNumberFormat(f) { return this._each((cell) => { cell.nf = f; }); }
+  setFontWeight(w) { return this._each((cell) => { cell.bold = w === 'bold'; }); }
+  setBackground(b) { return this._each((cell) => { cell.bg = b; }); }
+  setFontColor() { return this; }
+  setWrap() { return this; }
+  setVerticalAlignment() { return this; }
   copyTo(dest, type) {
     const T = CopyPasteType;
     for (let r = 0; r < dest.nr; r++) {
@@ -162,6 +172,34 @@ class FakeSheet {
     return JSON.stringify({ cells: out, hidden: [...this.hidden], filter: this.filter && [this.filter.range.getLastRow(), this.filter.range.getLastColumn()], maxRows: this.maxRows });
   }
   getName() { return this.name; }
+  setName(n) { this.name = n; return this; }
+  getDeveloperMetadata() { return (this.meta || []).map(([k, v]) => ({ getKey: () => k, getValue: () => v })); }
+  addDeveloperMetadata(k, v) { (this.meta = this.meta || []).push([k, v]); return this; }
+  clear() { this.cells = new Map(); return this; }
+  setFrozenRows(n) { this.frozenRows = n; }
+  setFrozenColumns(n) { this.frozenCols = n; }
+  autoResizeColumns() { return this; }
+  getCharts() { return (this.charts = this.charts || []).slice(); }
+  removeChart(c) { this.charts = this.charts.filter((x) => x !== c); }
+  insertChart(c) { (this.charts = this.charts || []).push(c); }
+  newChart() {
+    const spec = { ranges: [], options: {} };
+    const b = {
+      setChartType(t) { spec.type = t; return b; },
+      setMergeStrategy(m) { spec.merge = m; return b; },
+      setNumHeaders(n) { spec.headers = n; return b; },
+      addRange(r) { spec.ranges.push([r.getRow(), r.getColumn(), r.getNumRows(), r.getNumColumns()]); return b; },
+      setPosition(row, col) { spec.position = [row, col]; return b; },
+      setOption(k, v) { spec.options[k] = v; return b; },
+      build() { return spec; }
+    };
+    return b;
+  }
+  getLastRow() {
+    let last = 0;
+    for (const [k, cell] of this.cells) if (cell.v !== '' || cell.f) last = Math.max(last, Number(k.split(',')[0]));
+    return last;
+  }
   getRange(r, c, nr, nc) { return new FakeRange(this, r, c, nr, nc); }
   getMaxRows() { return this.maxRows; }
   getMaxColumns() { return this.maxCols; }
@@ -195,6 +233,14 @@ class FakeSheet {
 class FakeSpreadsheet {
   constructor(name, sheets) { this.name = name; this.sheets = sheets; }
   getSheetByName(n) { return this.sheets.find((s) => s.name === n) || null; }
+  getSheets() { return this.sheets.slice(); }
+  insertSheet(name, index) {
+    if (this.getSheetByName(name)) throw new Error('sheet exists ' + name);
+    const sh = new FakeSheet(name, 1000, 26);
+    this.sheets.splice(index === undefined ? this.sheets.length : index, 0, sh);
+    return sh;
+  }
+  getUrl() { return 'https://docs.google.com/spreadsheets/d/fake'; }
   getSpreadsheetTimeZone() { return TZ; }
   getName() { return this.name; }
   getId() { return 'fake-id'; }
@@ -234,6 +280,10 @@ function loadCodeGs(spreadsheet) {
       createTextOutput: (s) => ({ content: s, setMimeType() { return this; } })
     },
     Utilities: { formatDate, parseDate, getUuid: () => crypto.randomUUID() },
+    Charts: {
+      ChartType: { COLUMN: 'COLUMN', LINE: 'LINE', AREA: 'AREA', SCATTER: 'SCATTER' },
+      ChartMergeStrategy: { MERGE_COLUMNS: 'MERGE_COLUMNS' }
+    },
     Logger: { log: (s) => logs.push(String(s)) }
   };
   vm.createContext(context);

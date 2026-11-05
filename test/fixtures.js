@@ -154,6 +154,12 @@ const WON = [
   ['963bb3b6', '2026-10-25T04:05:44', 'Hong Kong', 'L', 800, 'hugo35kg']
 ];
 
+const DINOS = ['Giganotosaurus', 'Triceratops', 'Argentinosaurus', 'Velociraptor', 'Allosaurus', 'Ankylosaurus',
+  'Diplodocus', 'Tyrannosaurus', 'Deinonychus'];
+function categoryOf(title) {
+  return DINOS.includes(title) ? 'genre de dinosaures' : 'autre catégorie';
+}
+
 function uuid(prefix, n) {
   return `${prefix}-0000-4000-8000-${String(n).padStart(12, '0')}`;
 }
@@ -190,7 +196,7 @@ function apiResponse({ history = HISTORY, won = WON } = {}) {
         winner: sold ? { id: `buyer-${buyer}`, username: buyer } : null,
         snapshot_rarity: rarity,
         is_shiny: false,
-        card: { id: `card-${title}`, rarity, wikipedia_title: title }
+        card: { id: `card-${title}`, rarity, wikipedia_title: title, category: categoryOf(title) }
       };
     }),
     won: won.map(([p, end, title, rarity, price, seller], i) => ({
@@ -207,11 +213,11 @@ function apiResponse({ history = HISTORY, won = WON } = {}) {
       winner: { id: ME, username: 'Mighty_D_Eagle' },
       snapshot_rarity: rarity,
       is_shiny: false,
-      card: { id: `card-${title}`, rarity, wikipedia_title: title }
+      card: { id: `card-${title}`, rarity, wikipedia_title: title, category: categoryOf(title) }
     })),
     maxConcurrentAuctions: 5,
     mine: true
   };
 }
 
-module.exports = { ME, ACHATS_ROWS, VENTES_ROWS, HISTORY, WON, apiResponse, uuid, iso };
+module.exports = { DINOS, categoryOf, ME, ACHATS_ROWS, VENTES_ROWS, HISTORY, WON, apiResponse, uuid, iso };

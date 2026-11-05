@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WikiMasters Trading · Tableau de bord</title>
+  <link rel="stylesheet" href="ui.css">
+  <link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+  <header class="top">
+    <div>
+      <h1>Tableau de bord</h1>
+      <div id="updated" class="small muted"></div>
+    </div>
+    <div class="top-actions">
+      <button id="sync" class="primary">Mettre à jour</button>
+      <button id="export" hidden>Envoyer vers Google Sheets</button>
+      <a class="button" href="options.html" target="_blank">Paramètres</a>
+    </div>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-tab="overview" aria-selected="true">Vue d'ensemble</button>
+    <button role="tab" data-tab="cards">Par carte</button>
+    <button role="tab" data-tab="hours">Par heure</button>
+    <button role="tab" data-tab="prices">Prix</button>
+    <button role="tab" data-tab="stock">Stock</button>
+    <button role="tab" data-tab="tx">Transactions</button>
+  </nav>
+
+  <main>
+    <div id="status"></div>
+    <div id="warnings"></div>
+
+    <section id="tab-overview" data-panel="overview">
+      <div id="kpis" class="tiles"></div>
+      <div class="filters">
+        <span class="small secondary">Période :</span>
+        <div class="seg" id="period">
+          <button data-days="7">7 jours</button>
+          <button data-days="30" aria-pressed="true">30 jours</button>
+          <button data-days="0">Tout</button>
+        </div>
+      </div>
+      <div class="charts">
+        <figure class="card chart">
+          <figcaption><h3>Profit par jour</h3><span class="small muted">Réalisé = ventes − coût FIFO · Trading estimé = réalisé + variation de la plus-value latente du stock</span></figcaption>
+          <div class="chart-box"><canvas id="c-daily"></canvas><div class="chart-empty muted" hidden>Pas encore de données.</div></div>
+        </figure>
+        <figure class="card chart">
+          <figcaption><h3>Profit cumulé</h3><span class="small muted">Depuis le début de la période (W)</span></figcaption>
+          <div class="chart-box"><canvas id="c-cumul"></canvas><div class="chart-empty muted" hidden>Pas encore de données.</div></div>
+        </figure>
+        <figure class="card chart">
+          <figcaption><h3>Patrimoine estimé</h3><span class="small muted">Solde de wikibidous + valeur estimée du stock, les jours où le solde a été relevé</span></figcaption>
+          <div class="chart-box"><canvas id="c-networth"></canvas><div class="chart-empty muted" hidden>Le solde est relevé à chaque mise à jour : la courbe apparaîtra dès la première.</div></div>
+        </figure>
+        <figure class="card chart">
+          <figcaption><h3>Stock : coût et valeur estimée</h3><span class="small muted">En fin de journée (W)</span></figcaption>
+          <div class="chart-box"><canvas id="c-stock"></canvas><div class="chart-empty muted" hidden>Pas de stock suivi.</div></div>
+        </figure>
+      </div>
+      <details class="card">
+        <summary>Données par jour</summary>
+        <div id="days-table"></div>
+      </details>
+    </section>
+
+    <section id="tab-cards" data-panel="cards" hidden>
+      <div class="card"><div id="cards-table"></div></div>
+      <div class="charts">
+        <figure class="card chart">
+          <figcaption><h3>Profit réalisé par carte</h3><span class="small muted">W</span></figcaption>
+          <div class="chart-box"><canvas id="c-card-profit"></canvas><div class="chart-empty muted" hidden>Aucune vente suivie.</div></div>
+        </figure>
+        <figure class="card chart">
+          <figcaption><h3>Prix moyen d'achat et de vente par carte</h3><span class="small muted">W</span></figcaption>
+          <div class="chart-box"><canvas id="c-card-prices"></canvas><div class="chart-empty muted" hidden>Aucune transaction suivie.</div></div>
+        </figure>
+        <figure class="card chart">
+          <figcaption><h3>Profit moyen réalisé par carte</h3><span class="small muted">W par vente</span></figcaption>
+          <div class="chart-box"><canvas id="c-card-avgprofit"></canvas><div class="chart-empty muted" hidden>Aucune vente suivie.</div></div>
+        </figure>
+        <figure class="card chart">
+          <figcaption><h3>Marge</h3><span class="small muted">Profit / coût FIFO des cartes vendues</span></figcaption>
+          <div class="chart-box"><canvas id="c-card-margin"></canvas><div class="chart-empty muted" hidden>Aucune vente suivie.</div></div>
+        </figure>
+      </div>
+    </section>
+
+    <section id="tab-hours" data-panel="hours" hidden>
+      <div class="charts">
+        <figure class="card chart">
+          <figcaption><h3>Indice de prix par heure</h3><span class="small muted">1 = prix moyen de la carte · heure de Paris</span></figcaption>
+          <div class="chart-box"><canvas id="c-hour-index"></canvas><div class="chart-empty muted" hidden>Pas encore de données.</div></div>
+        </figure>
+        <figure class="card chart">
+          <figcaption><h3>Taux de vente par heure</h3><span class="small muted">Ventes / mises en vente terminées à cette heure</span></figcaption>
+          <div class="chart-box"><canvas id="c-hour-rate"></canvas><div class="chart-empty muted" hidden>Pas encore de données.</div></div>
+        </figure>
+      </div>
+      <div class="card"><div id="hours-table"></div></div>
+    </section>
+
+    <section id="tab-prices" data-panel="prices" hidden>
+      <div class="filters">
+        <label class="small secondary" for="price-card">Carte :</label>
+        <select id="price-card"></select>
+      </div>
+      <div class="charts">
+        <figure class="card chart">
+          <figcaption><h3>Prix d'achat successifs</h3><span class="small muted">Prix du 1er, 2e, 3e… achat de chaque carte (W)</span></figcaption>
+          <div class="chart-box"><canvas id="c-inflation"></canvas><div class="chart-empty muted" hidden>Aucun achat suivi.</div></div>
+        </figure>
+        <figure class="card chart">
+          <figcaption><h3>Prix des transactions dans le temps</h3><span id="scatter-sub" class="small muted">W</span></figcaption>
+          <div class="chart-box"><canvas id="c-scatter"></canvas><div class="chart-empty muted" hidden>Aucune transaction pour cette carte.</div></div>
+        </figure>
+      </div>
+    </section>
+
+    <section id="tab-stock" data-panel="stock" hidden>
+      <div class="card">
+        <h3>Inventaire suivi</h3>
+        <div id="stock-table"></div>
+      </div>
+      <div class="card">
+        <h3>Vos annonces en cours</h3>
+        <div id="listings-table"></div>
+      </div>
+    </section>
+
+    <section id="tab-tx" data-panel="tx" hidden>
+      <div class="filters">
+        <div class="seg" id="tx-kind">
+          <button data-kind="purchases" aria-pressed="true">Achats</button>
+          <button data-kind="sales">Ventes</button>
+        </div>
+        <input type="search" id="tx-search" placeholder="Filtrer par carte ou joueur">
+        <label class="check small"><input type="checkbox" id="tx-tracked"> Cartes suivies uniquement</label>
+      </div>
+      <p class="small muted">Cochez « Exclure » pour retirer une transaction des statistiques (par exemple un exemplaire gardé pour la collection).</p>
+      <div class="card"><div id="tx-table"></div></div>
+    </section>
+  </main>
+
+  <script src="vendor/chart.umd.js"></script>
+  <script src="lib/extract.js"></script>
+  <script src="lib/time.js"></script>
+  <script src="lib/settings.js"></script>
+  <script src="lib/store.js"></script>
+  <script src="lib/stats.js"></script>
+  <script src="lib/tables.js"></script>
+  <script src="lib/format.js"></script>
+  <script src="lib/charts.js"></script>
+  <script src="dashboard.js"></script>
+</body>
+</html>

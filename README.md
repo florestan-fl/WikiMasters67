@@ -1,137 +1,133 @@
-# WikiMasters → Google Sheets
+# WikiMasters Trading
 
-A Firefox extension with one button that adds your [WikiMasters](https://www.wiki-masters.com/) marketplace purchases and sales to your Google Sheets tracker (**Achats** and **Ventes** tabs).
+A Firefox extension for [WikiMasters](https://www.wiki-masters.com/) players who trade on the marketplace. One click records your purchases and sales. A dashboard then shows how much you make per day, what your stock is worth, and which cards and times of day pay best. An export to Google Sheets is optional.
+
+* **No account and no setup:** install it, choose the cards you trade, click **Mettre à jour** (Update).
+* **Your data stays in your Firefox profile.** It only leaves it if you turn on the Google Sheets export, and then only to your own spreadsheet.
+* **Every player configures their own cards** in the settings. Nothing in the code or the spreadsheet is specific to one player.
+
+## How it works
 
 ```
-Firefox extension ──reads──▶ wiki-masters.com/api/marketplace?mine=1   (with your login, in a wiki-masters tab)
-        │
-        └──POST JSON + secret──▶ Google Apps Script web app ──writes──▶ your spreadsheet
+wiki-masters.com/api/marketplace?mine=1  ──(your login, in a wiki-masters tab)──▶  extension
+   won      → purchases                                                       │  local database (all transactions)
+   history  → sales (sold / unsold)                                           │  + tracked-card settings
+   selling  → your active listings                                            │  → statistics, dashboard
+   auctions → other players' prices (stock valuation)                         │
+   page     → your wikibidous balance                                         └──(optional)──▶ Google Sheets
 ```
 
-* **Achats** ← the *Won* tab (auctions you won)
-* **Ventes** ← the *History* tab (your auctions that ended, sold → `Vendue` or unsold → `Non vendue`)
+* **Every** purchase and sale is recorded, whatever the card. The **tracked cards** only decide what counts in the statistics. So you can add a card later and its whole history is used.
+* A finished auction never changes: records are added once, identified by the site's auction ID.
+* The site only returns your **last 50** sales and your **last 50** won auctions (about 3 days of active trading). **Update at least every 2 days.** The extension warns you if it may have missed something.
 
-Each transaction is added once, whenever you click: the site's auction ID is stored in a hidden **ID site** column, so clicking twice never duplicates anything.
+## The figures
 
-## What gets written
-
-| Column | Achats | Ventes |
-|---|---|---|
-| ID | next number (`A22`, `V24`, …) | same |
-| Date/heure | auction end time, Paris time | same |
-| Carte | Wikipedia title of the card | same |
-| Rareté | rarity at listing time (`C`, `PC`, `R`, `SR`, `UR`, `L`) | same |
-| Prix (W) | final price | final price if sold, otherwise the listing price |
-| Vendeur / Statut | seller name | `Vendue` / `Non vendue` |
-| Inclure | `Oui` by default (configurable), see below | – |
-| **Acheteur** (new, Q) | – | buyer name |
-| **ID site** (new, hidden) | site auction ID | same |
-
-Only these raw columns are written. Your formulas are left alone:
-
-* the `ARRAYFORMULA`s in row 2 (Heure, Jour, Indice prix, Profit…);
-* the per-row **ID achat (FIFO)** formula, which is copied down to the new rows.
-
-New rows are inserted **in chronological order**, because the FIFO and "N° achat de l'espèce" formulas depend on row order. Your existing rows keep their order and their values. The filter range is extended to the new rows and columns.
-
-### Rows you entered by hand
-
-Rows without an **ID site** are linked to a site transaction with the **same card and same price**, at the closest date within 24 h. A different status or counterpart name counts against a candidate but does not rule it out. Only the hidden ID is written into them, plus the buyer for rows marked `Vendue`. Your dates, prices and statuses are never changed. The preview lists every link and its differences.
-
-### Inclure
-
-* Purchases dated **inside the period you had already tracked by hand** (up to your last hand-entered purchase, 03/11/2026 16:57) are added with **`Non`**. You had left them out, so they must not change your existing FIFO matching. Switch the ones that are investments to `Oui`.
-* Later purchases get the default from the settings: `Oui` (default), `Non`, or *automatic* (`Oui` if that card already has an `Oui` purchase).
-
-## Setup
-
-### 1. Apps Script, inside the spreadsheet (one-time)
-
-1. Open the spreadsheet → **Extensions → Apps Script**.
-2. Replace the content of `Code.gs` with [`apps-script/Code.gs`](apps-script/Code.gs) and click **Save**.
-3. In the toolbar, select the function **`setup`** and click **Run**. Accept the authorization prompt: it is your own script accessing your own spreadsheet. If Google shows "unverified app", click *Advanced → Go to …*.
-4. Open **Execution log**. It prints the **secret**: copy it.
-5. **Deploy → New deployment** → gear icon → **Web app**:
-   * *Execute as*: **Me**
-   * *Who has access*: **Anyone**
-   * **Deploy**, then copy the **Web app URL** (`https://script.google.com/macros/s/…/exec`).
-
-"Anyone" is needed because the extension does not log in to Google. Without the secret, the script refuses every request.
-
-When `Code.gs` changes later: **Deploy → Manage deployments → ✏️ → Version: New version → Deploy**. The URL stays the same.
-
-### 2. Install the extension in Firefox
-
-* **Quick test:** open `about:debugging#/runtime/this-firefox` → **Load Temporary Add-on…** → select `extension/manifest.json`. It is removed when Firefox restarts.
-* **Permanent install:** Firefox only installs signed extensions, but signing a private ("unlisted") extension is free and automatic:
-  1. Zip the *contents* of the `extension/` folder (`manifest.json` must be at the root of the zip):
-     ```bash
-     cd extension && zip -r ../wikimasters-sheets.zip . && cd ..
-     ```
-  2. Go to <https://addons.mozilla.org/developers/addon/submit/distribution>, choose **On your own** and upload the zip.
-  3. Download the signed `.xpi` and drag it into Firefox.
-
-  Or, with an AMO API key: `npx web-ext sign --source-dir extension --channel unlisted --api-key … --api-secret …`
-
-When asked, allow access to *wiki-masters.com* and *script.google.com*. If the popup says access is missing, click **Grant access**.
-
-### 3. Settings
-
-Click the toolbar icon → **Settings**:
-
-* paste the **Web app URL** and the **secret** → **Test connection** → **Save**;
-* *Ignore transactions before*: `2026-10-30` (your first hand-entered row). Empty = everything the site still shows;
-* *Inclure for new purchases*, *matching window*, *renumber IDs*: the defaults are fine.
-
-## Daily use
-
-1. Be logged in on wiki-masters.com. A tab does not need to be open: the extension opens one in the background if needed.
-2. Click the toolbar icon → **Update sheet**. The popup lists the rows added, and the badge shows how many.
-
-**Preview** shows the same report without writing anything. Use it for the first run.
-
-The site only returns your **last 50** finished sales and **last 50** won auctions, about 3 days at your pace. Update at least every couple of days. The extension warns you if the site's list no longer reaches back to your previous update.
-
-### What the first run will do on your current sheet
-
-This was simulated with your real rows and a real API answer (see `test/`):
-
-* **Achats:** your 21 rows are linked to their auctions. 13 purchases you had not entered are added with `Inclure = Non`: 4 dinosaurs from 30–31/10 (Gasproutine, MewiSecler, SURPRYZ, vedved) and 9 other cards (Allemagne, Norvège, Ryan Gosling, Diplodocus…).
-* **Ventes:** 22 of your 23 rows are linked. **V01** (Tyrannosaurus, 31/10) is older than the site's history and stays as is. 28 sales are added, mostly collection cards, plus the unsold Velociraptor at 980 and the Diplodocus sold for 1,100.
-* The preview flags differences such as **V05**: "Non vendue" in your sheet, sold to jomex according to the site. Your value is kept.
-
-## Things to know
-
-* Sales of cards that never went through an `Oui` purchase (cards from packs, collection cards left at `Non`) show **"Hors stock"** in *ID achat (FIFO)*, and *Contrôle* says "Aucun achat retenu disponible". That is expected: switch the purchase to `Oui` if it was a trade.
-* **Par espèce** has a fixed list of cards (A5:A13). Add new species there yourself if you want them in the summary and the "Indice prix".
-* Shiny cards are not distinguished from normal ones.
-* If you rename tabs or headers, keep these exact names: `ID`, `Date/heure`, `Carte`, `Rareté`, `Prix (W)`, `Vendeur`, `Inclure` (Achats) and `Statut` (Ventes). Columns are found by header name, not by position.
-* `resetSyncState()` in the Apps Script editor forgets the "tracked by hand" cutoff.
-
-## Troubleshooting
-
-| Message | Fix |
+| Figure | Calculation |
 |---|---|
-| *Wrong secret* | Copy the secret again from the `setup` execution log. |
-| *did not answer JSON* | The deployment is not "Anyone", or the URL is not the `/exec` one. |
-| *refused the request (HTTP 401)* / *no "history"/"won" lists* | Log in on wiki-masters.com. |
-| *missing column(s)* | A header was renamed in row 1 of Achats/Ventes. |
+| **Realized profit** | for each sale of a tracked card: sale price (minus the game's commission, if set) − cost of the **oldest** tracked purchase of that card not yet sold (FIFO). Exact. |
+| **Stock** | tracked purchases not yet consumed by a sale. |
+| **Estimated value of a card in stock** | median of your last 3 sales of that card over 14 days → otherwise the cheapest current listing seen on the market → otherwise your older sales → otherwise its purchase price. Minus the optional prudence discount. |
+| **Estimated trading profit (per day)** | realized profit for the day + change in the stock's unrealized gain (estimated value − cost) over the day. This answers "how much did I really make today?". |
+| **Estimated net worth** | wikibidous balance (read at each update) + estimated stock value. It also includes your non-trading income. |
+| **Max buy price** | your average sale price ÷ (1 + target margin). |
+
+"Tracked" transaction:
+* the card is in your list (or its Wikipedia description contains one of your keywords);
+* it is not earlier than the card's "tracked since" date;
+* you have not excluded it.
+
+A sale with no matching purchase (a card from a pack, or bought before you started tracking) is flagged. By default it is left out of the profit, or counted at cost 0 if you choose that.
+
+### Dashboard tabs
+
+* **Vue d'ensemble** (overview): today / 7 days / 30 days, profit per day (realized and estimated), cumulative profit, net worth (balance + stock), stock cost vs value, table per day.
+* **Par carte** (per card): table, plus realized profit, average buy / sell price, average profit and margin per card (the 4 charts from the old "Par espèce" tab).
+* **Par heure** (per hour): price index and sell-through rate by hour, best times to buy and sell.
+* **Prix** (prices): successive purchase prices per card; purchases and sales over time for one card.
+* **Stock**: inventory with cost, estimated value and its source; your active listings.
+* **Transactions**: every purchase and sale, with an **Exclure** (exclude) box. Use it to remove, for example, a copy you keep for your collection.
+
+## Installing
+
+### Permanent install (recommended)
+
+Firefox only installs signed extensions, but signing a private ("unlisted") extension is free and automatic:
+
+1. Get the zip of the `extension/` folder. Use the one provided, or:
+   ```bash
+   cd extension && zip -r ../wikimasters-trading.zip . && cd ..
+   ```
+2. Go to <https://addons.mozilla.org/developers/addon/submit/distribution>, choose **On your own**, and upload the zip.
+3. Download the signed `.xpi` and drag it into Firefox. Share that same file with other players.
+
+To let everyone install it in one click with automatic updates, choose **On this site** instead (public listing, reviewed by Mozilla).
+
+> ⚠️ A **temporary** extension (`about:debugging` → *Load Temporary Add-on*) **loses its data when Firefox restarts**. Only use it for testing, or download a backup (Settings → *Sauvegarde*) before closing Firefox.
+
+### First run
+
+1. Click the icon → **Paramètres** (Settings) → **Cartes suivies** (tracked cards). Click **+ Ajouter une carte** (add a card) and type the name exactly as on the site (the Wikipedia title, for example `Triceratops`). Names already seen in your transactions are suggested.
+   * *Suivie depuis* (tracked since): optional, to ignore purchases made before you started trading that card.
+   * *Mots-clés de catégorie* (category keywords): optional, for example `dinosaure`.
+2. Be logged in on wiki-masters.com, then click **Mettre à jour** (Update). A tab does not need to be open.
+3. Click **Tableau de bord** (dashboard).
+
+## Google Sheets (optional)
+
+The extension can copy all the data and statistics, with their charts, into a Google spreadsheet. **The spreadsheet is created by the script itself**, so there is no template to copy: an empty spreadsheet is enough.
+
+1. Create a Google spreadsheet (or use your existing one) → **Extensions → Apps Script**.
+2. Replace the content of `Code.gs` with [`apps-script/Code.gs`](apps-script/Code.gs) → **Save**.
+3. Select **`setup`** → **Run** → accept the authorization. If Google shows "unverified app": *Advanced → Go to…*. The **secret** appears in the **execution log**.
+4. **Deploy → New deployment** → ⚙ **Web app**, *Execute as*: **Me**, *Who has access*: **Anyone** → **Deploy** → copy the URL (`…/exec`).
+5. Extension settings → **Google Sheets**: paste the URL and the secret → **Tester la connexion** (test connection).
+
+The script then writes these tabs: **Tableau de bord, Par jour, Inventaire, Par carte, Par heure, Inflation, Prix dans le temps, Achats, Ventes**, with their charts. They are rewritten at each update, so don't edit them. Add your own tabs next to them if you want.
+
+If a tab with the same name already exists and was not created by the script, it is **kept** and renamed `… (v1)`.
+
+When `Code.gs` changes: **Deploy → Manage deployments → ✏️ → Version: New version → Deploy**. The URL stays the same.
+
+## Migrating from version 1 (your current spreadsheet)
+
+1. In Apps Script, replace `Code.gs` with the new version, then **Deploy → Manage deployments → ✏️ → New version**. The URL and the secret stay the same.
+2. Install the new extension. The URL and the secret carry over from your v1 settings.
+3. Settings → **Importer l'historique de la feuille** (import the sheet's history). This reads your **Achats / Ventes** tabs once:
+   * every row is imported, including those the site no longer shows (V01…);
+   * `Inclure = Non` becomes an **exclusion** (A01, A02, A06, A12, A13 and the purchases added as "Non");
+   * the cards marked `Oui` become your **tracked cards**.
+4. **Mettre à jour** (Update). Your old tabs (Achats, Ventes, Par heure, Inflation) are renamed `… (v1)` and kept. **Par espèce** is not touched. The new tabs are created next to them.
+
+## Backup and export
+
+Settings → **Sauvegarde et export**:
+
+* **Télécharger une sauvegarde** (download a backup) / **Restaurer** (restore): a JSON file with all your data and settings, for moving to another computer or keeping a safe copy;
+* **CSV** (Excel, French format): Achats, Ventes, Par carte, Par jour, Inventaire.
 
 ## Development
 
 ```bash
-node test/run-tests.js        # Apps Script logic on a fake spreadsheet, real data
-node test/background-test.js  # extension background script end-to-end (mocked browser API)
+node test/run-tests.js        # extraction, database, statistics, tables, Apps Script (fake runtime, real data)
+node test/background-test.js  # background script end-to-end (mocked browser API)
 npx web-ext lint --source-dir extension
 ```
 
 ```
-extension/            Firefox extension (Manifest V3)
+extension/
   manifest.json
-  background.js       fetches the API in a wiki-masters tab, calls the Apps Script
-  lib/extract.js      API answer → purchases / sales
-  popup.*             Update / Preview button and report
-  options.*           settings
-apps-script/Code.gs   web app that merges the rows into the spreadsheet
-test/                 Node tests (fake Apps Script runtime + fixtures from the real sheet)
+  background.js        reads wiki-masters.com, merges into the database, exports to Google Sheets
+  lib/extract.js       API answer → records
+  lib/store.js         local database (insert-only, v1 import, exclusions, backups)
+  lib/stats.js         FIFO, stock valuation, per day / card / hour statistics
+  lib/tables.js        tables for Google Sheets and CSV
+  lib/time.js          Paris time
+  lib/settings.js      settings and their defaults
+  lib/charts.js        Chart.js conventions (palette, marks, tooltips)
+  lib/format.js        DOM and number helpers
+  popup.*  options.*  dashboard.*
+  vendor/chart.umd.js  Chart.js 4.4.7 (MIT)
+apps-script/Code.gs    web app that writes the tables and charts into the spreadsheet
+test/                  Node tests (fixtures from a real spreadsheet and API answer)
 ```

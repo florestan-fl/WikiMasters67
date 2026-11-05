@@ -1,8 +1,9 @@
 body {
-  width: 500px;
-  max-height: 580px;
+  width: 420px;
+  max-height: 600px;
   padding: 12px 14px 10px;
   overflow-y: auto;
+  background: var(--surface);
 }
 
 header {
@@ -19,28 +20,25 @@ header {
 }
 .actions button { flex: 1; }
 
-.sheet-summary {
+.tiles {
+  grid-template-columns: 1fr 1fr;
+  margin: 10px 0;
+}
+.tile {
+  background: var(--surface-2);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.tile .value { font-size: 18px; }
+
+.added {
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 8px 10px;
   margin: 8px 0;
 }
-.sheet-summary .title {
-  display: flex;
-  justify-content: space-between;
-  font-weight: 600;
-}
-.sheet-summary .counts { margin-top: 2px; }
-.sheet-summary .counts b { color: var(--ok-fg); }
-
-.table-wrap {
-  max-height: 220px;
-  overflow: auto;
-  margin-top: 4px;
-}
-.table-wrap table { font-size: 12px; }
-.table-wrap td, .table-wrap th { padding: 3px 5px; }
-td.nowrap, td.num { white-space: nowrap; }
+.added .table-wrap { max-height: 200px; }
+.added table { font-size: 12px; }
 
 footer {
   margin-top: 10px;

@@ -1,0 +1,409 @@
+/* global browser, WMExtract, WMStore, WMStats, WMSettings, WMTime, WMFormat, WMCharts */
+'use strict';
+
+const F = WMFormat;
+const C = WMCharts;
+const $ = (id) => document.getElementById(id);
+
+const state = {
+  model: null,
+  settings: null,
+  tab: 'overview',
+  periodDays: 30,
+  priceCard: '',
+  txKind: 'purchases',
+  txSearch: '',
+  txTrackedOnly: false
+};
+
+/* ------------------------------------------------------------------ data */
+
+async function load() {
+  const data = await browser.storage.local.get(['db', 'settings', 'lastSync', 'lastExport', 'syncState']);
+  state.settings = WMSettings.normalize(data.settings);
+  state.model = WMStats.compute(WMStore.normalizeDb(data.db || WMStore.emptyDb()), state.settings, Date.now());
+  $('export').hidden = !WMSettings.sheetsConfigured(state.settings);
+  const parts = [data.lastSync && data.lastSync.at ? `Dernière mise à jour : ${WMTime.formatDateTime(data.lastSync.at)}` : 'Jamais mis à jour'];
+  if (data.lastExport && data.lastExport.at) parts.push(`export Google Sheets : ${WMTime.formatDateTime(data.lastExport.at)}`);
+  $('updated').textContent = parts.join(' · ');
+  setBusy(data.syncState && data.syncState.running);
+  render();
+}
+
+let reloadTimer = null;
+browser.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local') return;
+  if (changes.syncState) setBusy(changes.syncState.newValue && changes.syncState.newValue.running);
+  if (changes.db || changes.settings || changes.lastSync || changes.lastExport) {
+    clearTimeout(reloadTimer);
+    reloadTimer = setTimeout(load, 150);
+  }
+});
+
+function setBusy(busy) {
+  $('sync').disabled = !!busy;
+  $('sync').textContent = busy ? 'Mise à jour…' : 'Mettre à jour';
+}
+
+function status(kind, text) {
+  const box = $('status');
+  box.textContent = '';
+  if (text) box.append(F.el('div', { class: `notice ${kind}`, text }));
+}
+
+$('sync').addEventListener('click', async () => {
+  setBusy(true);
+  status('', '');
+  const r = await browser.runtime.sendMessage({ type: 'sync' });
+  if (!r || !r.ok) status('err', (r && r.error) || 'Erreur inconnue.');
+  else status('ok', `${r.added.purchases.length} achat(s) et ${r.added.sales.length} vente(s) ajoutés.${r.exported ? ' Feuille Google mise à jour.' : ''}`);
+});
+
+$('export').addEventListener('click', async () => {
+  $('export').disabled = true;
+  status('ok', 'Envoi vers Google Sheets…');
+  const r = await browser.runtime.sendMessage({ type: 'export' });
+  $('export').disabled = false;
+  if (!r || !r.ok) status('err', `Échec de l'export : ${(r && r.error) || 'pas de réponse'}`);
+  else status('ok', `Feuille « ${r.spreadsheet} » mise à jour.`);
+});
+
+/* ------------------------------------------------------------------ tabs */
+
+document.querySelectorAll('.tabs [data-tab]').forEach((b) => {
+  b.addEventListener('click', () => {
+    state.tab = b.dataset.tab;
+    document.querySelectorAll('.tabs [data-tab]').forEach((x) => x.setAttribute('aria-selected', String(x === b)));
+    document.querySelectorAll('[data-panel]').forEach((p) => { p.hidden = p.dataset.panel !== state.tab; });
+    render();
+  });
+});
+
+function segmented(id, attr, onPick) {
+  $(id).querySelectorAll('button').forEach((b) => {
+    b.addEventListener('click', () => {
+      $(id).querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+      onPick(b.dataset[attr]);
+    });
+  });
+}
+segmented('period', 'days', (v) => { state.periodDays = Number(v); render(); });
+segmented('tx-kind', 'kind', (v) => { state.txKind = v; render(); });
+$('tx-search').addEventListener('input', (e) => { state.txSearch = e.target.value; render(); });
+$('tx-tracked').addEventListener('change', (e) => { state.txTrackedOnly = e.target.checked; render(); });
+$('price-card').addEventListener('change', (e) => { state.priceCard = e.target.value; render(); });
+
+function render() {
+  if (!state.model) return;
+  renderWarnings();
+  C.destroyAll();
+  ({ overview, cards: renderCards, hours: renderHours, prices: renderPrices, stock: renderStock, tx: renderTx })[state.tab]();
+}
+
+function renderWarnings() {
+  const box = $('warnings');
+  box.textContent = '';
+  state.model.warnings.forEach((w) => box.append(F.el('div', { class: 'notice warn', text: w })));
+}
+
+/** Stable colour slot per card: order of the tracked list, then alphabetical. */
+function cardSlots() {
+  const slots = {};
+  let i = 0;
+  state.settings.tracking.cards.forEach((c) => {
+    const k = WMExtract.cardKey(c.name);
+    if (!(k in slots)) slots[k] = i++;
+  });
+  state.model.cards.slice().sort((a, b) => a.card.localeCompare(b.card, 'fr')).forEach((c) => {
+    if (!(c.key in slots)) slots[c.key] = i++;
+  });
+  return slots;
+}
+
+/* -------------------------------------------------------------- overview */
+
+function periodDays() {
+  const days = state.model.days;
+  if (!state.periodDays) return days;
+  const from = WMTime.addDays(WMTime.dayKey(Date.now()), -(state.periodDays - 1));
+  return days.filter((d) => d.day >= from);
+}
+
+function shortDay(key) {
+  return WMTime.formatDay(key).slice(0, 5);
+}
+
+function overview() {
+  const k = state.model.kpis;
+  const tiles = $('kpis');
+  tiles.textContent = '';
+  tiles.append(
+    F.tile("Profit réalisé aujourd'hui", F.signedUnit(k.realizedToday), `7 j : ${F.signedUnit(k.realized7)} · 30 j : ${F.signedUnit(k.realized30)}`, F.signClass(k.realizedToday)),
+    F.tile('Profit réalisé total', F.signedUnit(k.realizedTotal), `${k.sold} vente(s) · marge ${F.pct(k.margin)}`, F.signClass(k.realizedTotal)),
+    F.tile("Trading estimé aujourd'hui", F.signedUnit(k.tradingToday), 'Réalisé + variation du latent', F.signClass(k.tradingToday)),
+    F.tile('Trading estimé moyen', `${F.signedUnit(k.tradingPerDay7)}/j`, `Sur 7 jours : ${F.signedUnit(k.trading7)}`, F.signClass(k.tradingPerDay7)),
+    F.tile('Valeur estimée du stock', F.wUnit(k.stockValue), `${k.stockQty} carte(s) · coût ${F.wUnit(k.stockCost)}`),
+    F.tile('Plus-value latente', F.signedUnit(k.unrealized), 'Valeur estimée − coût FIFO', F.signClass(k.unrealized)),
+    F.tile('Solde wikibidous', F.wUnit(k.balance), k.balanceAt ? `Relevé le ${WMTime.formatDateTime(k.balanceAt)}` : 'Relevé à la prochaine mise à jour'),
+    F.tile('Patrimoine estimé', F.wUnit(k.netWorth), 'Solde + valeur du stock')
+  );
+
+  const days = periodDays();
+  const labels = days.map((d) => shortDay(d.day));
+  const title = (items) => (items.length ? WMTime.formatDay(days[items[0].dataIndex].day) : '');
+
+  C.render('c-daily', {
+    type: 'bar', unit: 'W', labels, tooltipTitle: title,
+    datasets: [
+      { label: 'Profit réalisé', data: days.map((d) => d.realized), slot: 0 },
+      { label: 'Trading estimé', data: days.map((d) => d.trading), slot: 1 }
+    ]
+  });
+
+  let cr = 0;
+  let ct = 0;
+  C.render('c-cumul', {
+    type: 'line', unit: 'W', labels, tooltipTitle: title, beginAtZero: true,
+    datasets: [
+      { label: 'Profit réalisé cumulé', data: days.map((d) => (cr += d.realized)), slot: 0 },
+      { label: 'Trading estimé cumulé', data: days.map((d) => (ct += d.trading)), slot: 1 }
+    ]
+  });
+
+  const withBalance = days.filter((d) => d.balance !== null);
+  C.render('c-networth', {
+    type: 'bar', unit: 'W', stacked: true,
+    labels: withBalance.map((d) => shortDay(d.day)),
+    tooltipTitle: (items) => (items.length ? WMTime.formatDay(withBalance[items[0].dataIndex].day) : ''),
+    datasets: [
+      { label: 'Solde', data: withBalance.map((d) => d.balance), slot: 0 },
+      { label: 'Valeur du stock', data: withBalance.map((d) => d.stockValue), slot: 1 }
+    ]
+  });
+
+  C.render('c-stock', {
+    type: 'line', unit: 'W', labels, tooltipTitle: title, beginAtZero: true,
+    datasets: [
+      { label: 'Valeur estimée', data: days.map((d) => (d.stockQty ? d.stockValue : null)), slot: 0 },
+      { label: 'Coût FIFO', data: days.map((d) => (d.stockQty ? d.stockCost : null)), slot: 1 }
+    ]
+  });
+
+  const box = $('days-table');
+  box.textContent = '';
+  box.append(F.table([
+    { label: 'Jour', value: (d) => WMTime.formatDay(d.day) },
+    { label: 'Achats', value: (d) => d.purchases, num: true },
+    { label: 'Dépensé', value: (d) => d.spent, format: F.w, num: true },
+    { label: 'Ventes', value: (d) => d.sales, num: true },
+    { label: 'Revenu', value: (d) => d.revenue, format: F.w, num: true },
+    { label: 'Profit réalisé', value: (d) => d.realized, format: F.signed, num: true, cls: (d, v) => F.signClass(v) },
+    { label: 'Stock (cartes)', value: (d) => d.stockQty, num: true },
+    { label: 'Coût du stock', value: (d) => d.stockCost, format: F.w, num: true },
+    { label: 'Valeur du stock', value: (d) => d.stockValue, format: F.w, num: true },
+    { label: 'Trading estimé', value: (d) => d.trading, format: F.signed, num: true, cls: (d, v) => F.signClass(v) },
+    { label: 'Solde', value: (d) => d.balance, format: F.w, num: true },
+    { label: 'Patrimoine', value: (d) => d.netWorth, format: F.w, num: true }
+  ], days.slice().reverse()));
+}
+
+/* ---------------------------------------------------------------- cards */
+
+function renderCards() {
+  const cards = state.model.cards;
+  const box = $('cards-table');
+  box.textContent = '';
+  box.append(F.table([
+    { label: 'Carte', value: (c) => c.card },
+    { label: 'Rareté', value: (c) => c.rarity },
+    { label: 'Achats', value: (c) => c.purchases, num: true },
+    { label: 'Prix achat moyen', value: (c) => c.avgBuy, format: F.w, num: true },
+    { label: 'Mises en vente', value: (c) => c.listings, num: true },
+    { label: 'Ventes', value: (c) => c.sold, num: true },
+    { label: 'Taux de vente', value: (c) => c.sellRate, format: F.pct, num: true },
+    { label: 'Prix vente moyen', value: (c) => c.avgSell, format: F.w, num: true },
+    { label: 'Profit réalisé', value: (c) => c.profit, format: F.signed, num: true, cls: (c, v) => F.signClass(v) },
+    { label: 'Profit moyen / vente', value: (c) => c.avgProfit, format: F.signed, num: true, cls: (c, v) => F.signClass(v) },
+    { label: 'Marge', value: (c) => c.margin, format: F.pct, num: true },
+    { label: 'En stock', value: (c) => c.stock, num: true },
+    { label: 'Détention moy. (h)', value: (c) => c.avgHold, format: F.dec1, num: true },
+    { label: 'Achat max conseillé', title: `Prix de vente moyen ÷ (1 + marge visée de ${state.settings.valuation.targetMarginPct} %)`, value: (c) => c.maxBuy, format: F.w, num: true }
+  ], cards));
+
+  const withSales = cards.filter((c) => c.sold > 0);
+  const names = withSales.map((c) => c.card);
+  C.render('c-card-profit', { type: 'bar', horizontal: true, unit: 'W', labels: names, datasets: [{ label: 'Profit réalisé', data: withSales.map((c) => c.profit), slot: 0 }] });
+  const traded = cards.filter((c) => c.purchases + c.sold > 0);
+  C.render('c-card-prices', {
+    type: 'bar', horizontal: true, unit: 'W', labels: traded.map((c) => c.card),
+    datasets: [
+      { label: 'Prix achat moyen', data: traded.map((c) => c.avgBuy), slot: 0 },
+      { label: 'Prix vente moyen', data: traded.map((c) => c.avgSell), slot: 1 }
+    ]
+  });
+  C.render('c-card-avgprofit', { type: 'bar', horizontal: true, unit: 'W', labels: names, datasets: [{ label: 'Profit moyen / vente', data: withSales.map((c) => c.avgProfit), slot: 0 }] });
+  C.render('c-card-margin', { type: 'bar', horizontal: true, unit: 'pct', labels: names, datasets: [{ label: 'Marge', data: withSales.map((c) => c.margin), slot: 0 }] });
+}
+
+/* ---------------------------------------------------------------- hours */
+
+function renderHours() {
+  const hours = state.model.hours;
+  const labels = hours.map((h) => `${h.hour} h`);
+  C.render('c-hour-index', {
+    type: 'bar', unit: 'idx', labels,
+    datasets: [
+      { label: 'Indice prix achat', data: hours.map((h) => h.buyIndex), slot: 0 },
+      { label: 'Indice prix vente', data: hours.map((h) => h.sellIndex), slot: 1 }
+    ]
+  });
+  C.render('c-hour-rate', { type: 'bar', unit: 'pct', labels, datasets: [{ label: 'Taux de vente', data: hours.map((h) => h.sellRate), slot: 0 }] });
+
+  const best = (field, dir) => {
+    const list = hours.filter((h) => h[field] !== null);
+    if (!list.length) return null;
+    return list.reduce((a, b) => (dir * (b[field] - a[field]) > 0 ? b : a));
+  };
+  const bBuy = best('buyIndex', -1);
+  const bSell = best('sellIndex', 1);
+  const bRate = best('sellRate', 1);
+  const box = $('hours-table');
+  box.textContent = '';
+  box.append(F.el('p', { class: 'small secondary', text: [
+    bBuy ? `Meilleure heure pour acheter (prix le plus bas) : ${bBuy.hour} h (indice ${F.dec2(bBuy.buyIndex)}).` : '',
+    bSell ? `Meilleure heure pour vendre (prix le plus haut) : ${bSell.hour} h (indice ${F.dec2(bSell.sellIndex)}).` : '',
+    bRate ? `Meilleur taux de vente : ${bRate.hour} h (${F.pct(bRate.sellRate)}).` : ''
+  ].filter(Boolean).join(' ') || 'Pas encore assez de données.' }));
+  box.append(F.table([
+    { label: 'Heure', value: (h) => `${h.hour} h` },
+    { label: 'Achats', value: (h) => h.purchases, num: true },
+    { label: 'Indice prix achat moyen', value: (h) => h.buyIndex, format: F.dec2, num: true },
+    { label: 'Mises en vente', value: (h) => h.listings, num: true },
+    { label: 'Ventes', value: (h) => h.sold, num: true },
+    { label: 'Taux de vente', value: (h) => h.sellRate, format: F.pct, num: true },
+    { label: 'Indice prix vente moyen', value: (h) => h.sellIndex, format: F.dec2, num: true }
+  ], hours));
+}
+
+/* --------------------------------------------------------------- prices */
+
+function renderPrices() {
+  const m = state.model;
+  const slots = cardSlots();
+  const select = $('price-card');
+  const cards = m.seriesCards;
+  if (state.priceCard && !cards.some((c) => c.key === state.priceCard)) state.priceCard = '';
+  select.textContent = '';
+  select.append(F.el('option', { value: '', text: `Les ${Math.min(cards.length, WMStats.MAX_SERIES)} cartes les plus échangées` }));
+  cards.forEach((c) => select.append(F.el('option', { value: c.key, text: c.card, selected: c.key === state.priceCard })));
+
+  const shown = state.priceCard ? cards.filter((c) => c.key === state.priceCard) : cards.slice(0, WMStats.MAX_SERIES);
+  const idx = shown.map((c) => cards.indexOf(c) + 1);
+  C.render('c-inflation', {
+    type: 'line', unit: 'W', labels: m.inflation.rows.map((r) => `${r[0]}`),
+    tooltipTitle: (items) => (items.length ? `${items[0].label}e achat` : ''),
+    datasets: shown.map((c, i) => ({ label: c.card, data: m.inflation.rows.map((r) => r[idx[i]]), slot: slots[c.key] }))
+  });
+
+  // Scatter: one card at a time (purchases vs sales), to keep points readable.
+  const focus = state.priceCard ? cards.find((c) => c.key === state.priceCard) : cards[0];
+  $('scatter-sub').textContent = focus ? `${focus.card} · achats et ventes (W)` : 'W';
+  const series = focus ? m.priceSeries[focus.key] : { buys: [], sells: [] };
+  C.render('c-scatter', {
+    type: 'scatter', unit: 'W', xType: 'linear',
+    xTicks: { callback: (v) => WMTime.formatDay(WMTime.dayKey(v)).slice(0, 5), maxTicksLimit: 8 },
+    tooltipTitle: (items) => (items.length ? WMTime.formatDateTime(items[0].parsed.x) : ''),
+    datasets: [
+      { label: 'Achats', data: series.buys.map((p) => ({ x: p.t, y: p.price })), slot: 0 },
+      { label: 'Ventes', data: series.sells.map((p) => ({ x: p.t, y: p.price })), slot: 1, pointStyle: 'triangle' }
+    ]
+  });
+}
+
+/* ---------------------------------------------------------------- stock */
+
+function renderStock() {
+  const m = state.model;
+  const box = $('stock-table');
+  box.textContent = '';
+  if (!m.inventory.length) box.append(F.el('p', { class: 'muted', text: 'Aucune carte suivie en stock.' }));
+  else {
+    box.append(F.table([
+      { label: 'Carte', value: (i) => i.card },
+      { label: 'Rareté', value: (i) => i.rarity },
+      { label: 'Quantité', value: (i) => i.qty, num: true },
+      { label: 'Dont en vente', value: (i) => i.listed, num: true },
+      { label: 'Coût FIFO', value: (i) => i.cost, format: F.w, num: true },
+      { label: 'Coût moyen', value: (i) => i.avgCost, format: F.w, num: true },
+      { label: 'Valeur unitaire est.', value: (i) => i.unitValue, format: F.w, num: true },
+      { label: 'Source', value: (i) => i.valueSource },
+      { label: 'Valeur totale est.', value: (i) => i.value, format: F.w, num: true },
+      { label: 'Latent', value: (i) => i.unrealized, format: F.signed, num: true, cls: (i, v) => F.signClass(v) },
+      { label: 'Plus ancien achat', value: (i) => WMTime.formatDateTime(i.oldest), cls: () => 'nowrap' },
+      { label: 'Détention moy. (h)', value: (i) => i.avgAge, format: F.dec1, num: true }
+    ], m.inventory));
+  }
+  const lb = $('listings-table');
+  lb.textContent = '';
+  if (!m.listings.length) lb.append(F.el('p', { class: 'muted', text: 'Aucune annonce en cours lors de la dernière mise à jour.' }));
+  else {
+    lb.append(F.table([
+      { label: 'Carte', value: (l) => l.card },
+      { label: 'Prix actuel', value: (l) => l.price, format: F.w, num: true },
+      { label: 'Enchère reçue', value: (l) => (l.hasBid ? 'Oui' : 'Non') },
+      { label: 'Fin', value: (l) => WMTime.formatDateTime(l.end), cls: () => 'nowrap' }
+    ], m.listings));
+  }
+}
+
+/* --------------------------------------------------------- transactions */
+
+function renderTx() {
+  const m = state.model;
+  const q = WMExtract.cardKey(state.txSearch);
+  let rows = (state.txKind === 'purchases' ? m.purchases : m.sales).slice().reverse();
+  if (state.txTrackedOnly) rows = rows.filter((r) => r.matchesRule);
+  if (q) rows = rows.filter((r) => WMExtract.cardKey(r.card).includes(q) || WMExtract.cardKey(r.party).includes(q));
+  const total = rows.length;
+  rows = rows.slice(0, 1000);
+
+  const exclude = (r) => F.el('input', {
+    type: 'checkbox', checked: r.excluded, 'aria-label': `Exclure ${r.label}`,
+    onchange: async (e) => {
+      e.target.disabled = true;
+      await browser.runtime.sendMessage({ type: 'setExcluded', id: r.id, excluded: e.target.checked });
+    }
+  });
+  const common = [
+    { label: 'ID', value: (r) => r.label },
+    { label: 'Date', value: (r) => WMTime.formatDateTime(r.time), cls: () => 'nowrap' },
+    { label: 'Carte', value: (r) => r.card },
+    { label: 'Rareté', value: (r) => r.rarity },
+    { label: 'Prix', value: (r) => r.price, format: F.w, num: true }
+  ];
+  const cols = state.txKind === 'purchases'
+    ? common.concat([
+      { label: 'Vendeur', value: (r) => r.party },
+      { label: 'Suivie', value: (r) => (r.tracked ? 'Oui' : 'Non') },
+      { label: 'N°', value: (r) => (r.tracked ? r.n : null), num: true },
+      { label: 'Vendue par', value: (r) => r.soldBy || '' },
+      { label: 'Exclure', value: exclude }
+    ])
+    : common.concat([
+      { label: 'Statut', value: (r) => r.status },
+      { label: 'Acheteur', value: (r) => r.party },
+      { label: 'Achat (FIFO)', value: (r) => r.lot || '' },
+      { label: 'Coût', value: (r) => r.cost, format: F.w, num: true },
+      { label: 'Profit', value: (r) => r.profit, format: F.signed, num: true, cls: (r, v) => F.signClass(v) },
+      { label: 'Marge', value: (r) => r.margin, format: F.pct, num: true },
+      { label: 'Détention (h)', value: (r) => r.hold, format: F.dec1, num: true },
+      { label: 'Contrôle', value: (r) => r.check },
+      { label: 'Exclure', value: exclude }
+    ]);
+  const box = $('tx-table');
+  box.textContent = '';
+  box.append(F.el('div', { class: 'small muted', text: `${total} ligne(s)${total > 1000 ? ' (1 000 premières affichées)' : ''}. En gris : non suivies.` }));
+  box.append(F.table(cols, rows, { rowClass: (r) => (r.tracked ? null : 'dim') }));
+}
+
+load();

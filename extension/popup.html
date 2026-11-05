@@ -1,36 +1,43 @@
 <!doctype html>
-<html lang="en">
+<html lang="fr">
 <head>
   <meta charset="utf-8">
-  <title>WikiMasters → Sheets</title>
+  <title>WikiMasters Trading</title>
   <link rel="stylesheet" href="ui.css">
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
   <header>
-    <h1>WikiMasters → Sheets</h1>
-    <a href="#" id="open-options" class="small">Settings</a>
+    <h1>WikiMasters Trading</h1>
+    <a href="#" id="open-options" class="small">Paramètres</a>
   </header>
 
   <div id="permission" class="notice warn" hidden>
-    The extension needs access to wiki-masters.com and script.google.com.
-    <div class="actions"><button id="grant">Grant access</button></div>
+    L'extension a besoin d'accéder à wiki-masters.com (et à script.google.com pour l'export).
+    <div class="actions"><button id="grant">Autoriser</button></div>
   </div>
 
-  <div id="setup" class="notice warn" hidden>
-    Fill in the Apps Script URL and secret in the <a href="#" id="open-options-2">settings</a> first.
+  <div id="no-cards" class="notice warn" hidden>
+    Aucune carte suivie pour l'instant. Ajoutez les cartes que vous échangez dans les <a href="#" id="open-options-2">paramètres</a>.
   </div>
 
   <div class="actions">
-    <button id="preview" title="Shows what would be added, without writing anything">Preview</button>
-    <button id="sync" class="primary">Update sheet</button>
+    <button id="sync" class="primary">Mettre à jour</button>
+    <button id="dashboard">Tableau de bord</button>
   </div>
 
   <div id="status" class="small muted"></div>
+  <div id="tiles" class="tiles"></div>
   <div id="result"></div>
 
-  <footer class="small muted" id="last-sync"></footer>
+  <footer class="small muted" id="footer"></footer>
 
+  <script src="lib/extract.js"></script>
+  <script src="lib/time.js"></script>
+  <script src="lib/settings.js"></script>
+  <script src="lib/store.js"></script>
+  <script src="lib/stats.js"></script>
+  <script src="lib/format.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

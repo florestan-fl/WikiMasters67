@@ -1,13 +1,19 @@
 /*
- * End-to-end test of the sync logic: real sheet rows + real API answer,
- * fake Apps Script runtime. Run with: node test/run-tests.js
+ * Tests of the extension logic (extract, store, stats, tables) and of the
+ * Apps Script v2 (fake runtime). Real data: your sheet rows and a real API
+ * answer (test/fixtures.js). Run with: node test/run-tests.js
  */
 'use strict';
 
 const assert = require('assert');
-const { FakeSheet, FakeSpreadsheet, loadCodeGs, parisDate, formatDate, TZ } = require('./fake-gas');
-const { ACHATS_ROWS, VENTES_ROWS, apiResponse, uuid, iso } = require('./fixtures');
-const { extract, toMs } = require('../extension/lib/extract');
+const { FakeSheet, FakeSpreadsheet, loadCodeGs, parisDate } = require('./fake-gas');
+const fx = require('./fixtures');
+const Extract = require('../extension/lib/extract');
+const Time = require('../extension/lib/time');
+const Settings = require('../extension/lib/settings');
+const Store = require('../extension/lib/store');
+const Stats = require('../extension/lib/stats');
+const Tables = require('../extension/lib/tables');
 
 let passed = 0;
 function test(name, fn) {
@@ -21,304 +27,364 @@ function test(name, fn) {
   }
 }
 
-const ACHATS_HEADERS = ['ID', 'Date/heure', 'Carte', 'Rareté', 'Prix (W)', 'Vendeur', 'Inclure',
-  'Heure', 'Jour (1 = lundi)', "N° achat de l'espèce", 'Indice prix'];
-const VENTES_HEADERS = ['ID', 'Date/heure', 'Carte', 'Rareté', 'Prix (W)', 'Statut', 'ID achat (FIFO)',
-  "Prix d'achat (W)", 'Revenu net (W)', 'Profit (W)', 'Marge', 'Détention (h)', 'Heure', 'Jour (1 = lundi)',
-  'Indice prix', 'Contrôle'];
-const FIFO = (r) => `=IF(C${r}="";"";FIFO(C${r};C$1:C${r - 1};F$1:F${r - 1}))`;
+const P = (s) => parisDate(s).getTime(); // "dd/mm/yyyy hh:mm" Paris -> ms
+const settingsWith = (cards, extra) => Settings.normalize(Object.assign({
+  tracking: { cards: cards.map((c) => (typeof c === 'string' ? { name: c } : c)), categories: [] }
+}, extra || {}));
 
-function buildSpreadsheet() {
-  const achats = new FakeSheet('Achats', 999, 26);
-  ACHATS_HEADERS.forEach((h, i) => { achats.cell(1, i + 1).v = h; achats.cell(1, i + 1).fmt = 'header'; });
-  ACHATS_ROWS.forEach((row, i) => {
-    const r = i + 2;
-    row.forEach((v, c) => { achats.cell(r, c + 1).v = c === 1 ? parisDate(v) : v; });
-    for (let c = 1; c <= 11; c++) achats.cell(r, c).fmt = 'data';
-  });
-  for (let r = 2; r <= 999; r++) achats.cell(r, 7).dv = 'Oui/Non';
-  ['H', 'I', 'J', 'K'].forEach((col, i) => { achats.cell(2, 8 + i).f = `=ARRAYFORMULA(IF(B2:B="";"";${col}))`; });
-  achats.getRange(1, 1, 22, 11).createFilter();
-
-  const ventes = new FakeSheet('Ventes', 998, 26);
-  VENTES_HEADERS.forEach((h, i) => { ventes.cell(1, i + 1).v = h; ventes.cell(1, i + 1).fmt = 'header'; });
-  VENTES_ROWS.forEach((row, i) => {
-    const r = i + 2;
-    row.forEach((v, c) => { ventes.cell(r, c + 1).v = c === 1 ? parisDate(v) : v; });
-    ventes.cell(r, 7).f = FIFO(r);
-    for (let c = 1; c <= 16; c++) ventes.cell(r, c).fmt = 'data';
-  });
-  for (let r = 2; r <= 998; r++) ventes.cell(r, 6).dv = 'Vendue/Non vendue';
-  for (let c = 8; c <= 16; c++) ventes.cell(2, c).f = `=ARRAYFORMULA(IF(F2:F="";"";${c}))`;
-  ventes.getRange(1, 1, 21, 16).createFilter();
-
-  return { ss: new FakeSpreadsheet('WikiMasters', [achats, ventes]), achats, ventes };
+/** v1 sheet rows as the Apps Script "readV1" returns them. */
+function v1Rows() {
+  const won = Extract.extract(fx.apiResponse()).purchases;
+  const hist = Extract.extract(fx.apiResponse()).sales;
+  // Same unique linking the v1 extension did: same card + price, closest date, each site id once.
+  const used = new Set();
+  const idFor = (list, card, price, time) => {
+    const near = list.filter((x) => x.card === card && x.price === price && !used.has(x.id))
+      .sort((a, b) => Math.abs(a.time - time) - Math.abs(b.time - time))[0];
+    if (!near || Math.abs(near.time - time) >= 24 * 3600e3) return '';
+    used.add(near.id);
+    return near.id;
+  };
+  return {
+    purchases: fx.ACHATS_ROWS.map(([label, date, card, rarity, price, party, inclure]) => ({
+      label, time: P(date), card, rarity, price, party, inclure, siteId: idFor(won, card, price, P(date))
+    })),
+    sales: fx.VENTES_ROWS.map(([label, date, card, rarity, price, status]) => ({
+      label, time: P(date), card, rarity, price, status, party: '', siteId: idFor(hist, card, price, P(date))
+    }))
+  };
 }
 
-function newRuntime() {
-  const env = buildSpreadsheet();
-  const gas = loadCodeGs(env.ss);
+/* ------------------------------------------------------------------ time */
+
+test('time: Paris day keys, boundaries and DST', () => {
+  assert.strictEqual(Time.dayKey(Date.UTC(2026, 10, 3, 23, 30)), '2026-11-04'); // 00:30 Paris
+  assert.strictEqual(Time.dayStart('2026-11-04'), Date.UTC(2026, 10, 3, 23, 0));
+  assert.strictEqual(Time.dayEnd('2026-11-04'), Date.UTC(2026, 10, 4, 23, 0) - 1);
+  assert.strictEqual(Time.dayEnd('2026-10-25') - Time.dayStart('2026-10-25') + 1, 25 * 3600e3, '25 h day (end of DST)');
+  assert.strictEqual(Time.nextDay('2026-12-31'), '2027-01-01');
+  assert.strictEqual(Time.hourOf(Date.UTC(2026, 10, 3, 17, 32)), 18);
+  assert.strictEqual(Time.formatDateTime(Date.UTC(2026, 10, 3, 17, 32)), '03/11/2026 18:32');
+  assert.strictEqual(Time.weekdayOf(Date.UTC(2026, 10, 2, 12)), 1, 'Monday');
+});
+
+/* --------------------------------------------------------------- extract */
+
+test('extract: purchases, sales, listings, market, categories', () => {
+  const data = fx.apiResponse();
+  data.selling = [{ id: 's1', status: 'active', seller_id: fx.ME, card: { wikipedia_title: 'Triceratops', category: 'genre de dinosaures' }, effective_bid: 1500, current_bid: null, end_at: '2026-11-05T20:00:00+00:00' }];
+  data.auctions = [
+    { id: 'm1', status: 'active', seller_id: 'other', card: { wikipedia_title: 'Triceratops' }, effective_bid: 950, created_at: '2026-11-05T10:00:00+00:00' },
+    { id: 'm2', status: 'active', seller_id: fx.ME, card: { wikipedia_title: 'Triceratops' }, effective_bid: 10 }
+  ];
+  const ex = Extract.extract(data);
+  assert.strictEqual(ex.me, fx.ME);
+  assert.strictEqual(ex.purchases.length, 38);
+  assert.strictEqual(ex.sales.length, 50);
+  const tri = ex.sales.find((s) => s.id.startsWith('13c0146a'));
+  assert.deepStrictEqual([tri.status, tri.price, tri.party], ['Non vendue', 1500, ''], 'unsold uses base_amount, not the repriced listing');
+  assert.deepStrictEqual(ex.selling.map((s) => [s.card, s.price]), [['Triceratops', 1500]]);
+  assert.deepStrictEqual(ex.asks.map((a) => [a.card, a.price]), [['Triceratops', 950]], 'own listings are not market prices');
+  assert.strictEqual(ex.cards[Extract.cardKey('Triceratops')].category, 'genre de dinosaures');
+  assert.strictEqual(Extract.cardKey('  Norvège '), 'norvege');
+  assert.throws(() => Extract.extract({ auctions: [] }), /connecté/);
+});
+
+/* ----------------------------------------------------------------- store */
+
+test('store: insert-only merge with chronological labels', () => {
+  const db = Store.emptyDb();
+  const ex = Extract.extract(fx.apiResponse());
+  const added = Store.mergeSync(db, Object.assign({}, ex, { balance: 1667 }), Date.UTC(2026, 10, 3, 18));
+  assert.strictEqual(added.purchases.length, 38);
+  assert.strictEqual(added.sales.length, 50);
+  assert.strictEqual(added.purchases[0].label, 'A01');
+  assert.strictEqual(added.purchases[0].card, 'Hong Kong', 'oldest first');
+  assert.strictEqual(added.sales[49].label, 'V50');
+  assert.deepStrictEqual(db.snapshots, [{ t: Date.UTC(2026, 10, 3, 18), balance: 1667 }]);
+  const again = Store.mergeSync(db, ex, Date.UTC(2026, 10, 3, 19));
+  assert.deepStrictEqual([again.purchases.length, again.sales.length], [0, 0]);
+  assert.strictEqual(db.snapshots.length, 1, 'no balance -> no snapshot');
+  // A record never changes once stored.
+  const id = added.sales[0].id;
+  const tampered = JSON.parse(JSON.stringify(ex));
+  tampered.sales.find((s) => s.id === id).price = 99999;
+  Store.mergeSync(db, tampered);
+  assert.notStrictEqual(db.sales[id].price, 99999);
+});
+
+test('store: v1 import keeps labels, history and "Inclure = Non" as exclusions', () => {
+  const db = Store.emptyDb();
+  const res = Store.importV1(db, v1Rows());
+  assert.deepStrictEqual([res.purchases, res.sales, res.excluded], [21, 23, 5]);
+  assert.deepStrictEqual(res.trackedCards, ['Allosaurus', 'Ankylosaurus', 'Argentinosaurus', 'Deinonychus', 'Giganotosaurus', 'Triceratops', 'Tyrannosaurus', 'Velociraptor']);
+  const a01 = Object.values(db.purchases).find((r) => r.label === 'A01');
+  assert.ok(Store.isExcluded(db, a01.id), 'A01 was Non');
+  assert.ok(a01.id.startsWith('a9def0fb'), 'linked to its site id');
+  const v01 = Object.values(db.sales).find((r) => r.label === 'V01');
+  assert.ok(v01.id.startsWith('v1:'), 'V01 is too old for the site: kept with a local id');
+  // Then the site data: no duplicates, new labels continue after A21 / V23.
+  const added = Store.mergeSync(db, Extract.extract(fx.apiResponse()));
+  assert.strictEqual(added.purchases.length, 38 - 21);
+  assert.strictEqual(added.sales.length, 50 - 22);
+  assert.strictEqual(added.purchases[0].label, 'A22');
+  assert.strictEqual(added.sales[0].label, 'V24');
+  // Importing twice changes nothing.
+  const again = Store.importV1(db, v1Rows());
+  assert.deepStrictEqual([again.purchases, again.sales], [0, 0]);
+});
+
+test('store: backup round trip and validation', () => {
+  const db = Store.emptyDb();
+  Store.mergeSync(db, Extract.extract(fx.apiResponse()));
+  const b = JSON.parse(JSON.stringify(Store.makeBackup(db, settingsWith(['Triceratops']))));
+  const back = Store.readBackup(b);
+  assert.strictEqual(Object.keys(back.db.purchases).length, 38);
+  assert.strictEqual(back.settings.tracking.cards[0].name, 'Triceratops');
+  assert.throws(() => Store.readBackup({ hello: 1 }), /sauvegarde/);
+});
+
+/* ----------------------------------------------------------------- stats */
+
+/** Small hand-checked scenario. */
+function scenario() {
+  const db = Store.emptyDb();
+  const T = (d, h) => Time.fromLocal(2026, 11, d, h, 0);
+  Store.mergeSync(db, {
+    purchases: [
+      { id: 'p1', time: T(1, 10), card: 'Triceratops', rarity: 'SR', price: 100, party: 'a' },
+      { id: 'p2', time: T(1, 11), card: 'Triceratops', rarity: 'SR', price: 200, party: 'b' },
+      { id: 'p3', time: T(1, 12), card: 'Norvège', rarity: 'L', price: 1600, party: 'c' }
+    ],
+    sales: [
+      { id: 's1', time: T(2, 18), card: 'Triceratops', rarity: 'SR', price: 300, status: 'Vendue', party: 'x' },
+      { id: 's2', time: T(2, 20), card: 'Triceratops', rarity: 'SR', price: 400, status: 'Non vendue', party: '' },
+      { id: 's3', time: T(2, 21), card: 'Norvège', rarity: 'L', price: 1950, status: 'Vendue', party: 'y' }
+    ]
+  });
+  db.snapshots.push({ t: T(2, 22), balance: 1000 });
+  return { db, now: T(2, 23), T };
+}
+
+test('stats: FIFO, stock value, daily realized / trading profit, net worth', () => {
+  const { db, now } = scenario();
+  const m = Stats.compute(db, settingsWith(['Triceratops']), now);
+  const s1 = m.sales.find((s) => s.id === 's1');
+  assert.deepStrictEqual([s1.lot, s1.cost, s1.profit, s1.check], ['A01', 100, 200, 'OK'], 'oldest purchase first');
+  assert.strictEqual(s1.hold, 32);
+  assert.strictEqual(m.sales.find((s) => s.id === 's3').check, 'Non suivie');
+  // Stock: the 200 W Triceratops, valued at the median of recent sales (300).
+  assert.deepStrictEqual(m.inventory.map((i) => [i.card, i.qty, i.cost, i.unitValue, i.valueSource]),
+    [['Triceratops', 1, 200, 300, 'ventes récentes']]);
+  assert.deepStrictEqual(m.days.map((d) => d.day), ['2026-11-01', '2026-11-02']);
+  const [d1, d2] = m.days;
+  assert.deepStrictEqual([d1.realized, d1.stockCost, d1.stockValue, d1.trading], [0, 300, 300, 0], 'day 1: no price evidence yet -> valued at cost');
+  assert.deepStrictEqual([d2.realized, d2.stockCost, d2.stockValue, d2.unrealized, d2.trading], [200, 200, 300, 100, 300]);
+  assert.deepStrictEqual([d2.balance, d2.netWorth], [1000, 1300]);
+  const k = m.kpis;
+  assert.deepStrictEqual([k.realizedToday, k.realizedTotal, k.tradingToday, k.stockValue, k.netWorth, k.margin],
+    [200, 200, 300, 300, 1300, 2]);
+  assert.strictEqual(k.sellRate, 0.5);
+  const c = m.cards.find((x) => x.card === 'Triceratops');
+  assert.deepStrictEqual([c.purchases, c.avgBuy, c.listings, c.sold, c.avgSell, c.profit, c.stock, c.maxBuy],
+    [2, 150, 2, 1, 300, 200, 1, 300 / 1.3]);
+});
+
+test('stats: excluding a purchase changes the FIFO match', () => {
+  const { db, now } = scenario();
+  Store.setExcluded(db, 'p1', true);
+  const m = Stats.compute(db, settingsWith(['Triceratops']), now);
+  const s1 = m.sales.find((s) => s.id === 's1');
+  assert.deepStrictEqual([s1.lot, s1.profit], ['A02', 100]);
+  assert.strictEqual(m.kpis.stockQty, 0);
+  assert.strictEqual(m.purchases.find((p) => p.id === 'p1').tracked, false);
+});
+
+test('stats: "since" date, category keyword and unmatched sales', () => {
+  const { db, now } = scenario();
+  // Tracking Triceratops only from 01/12 10:30: the 100 W purchase is ignored.
+  const since = Stats.compute(db, settingsWith([{ name: 'triceratops', since: '2026-11-02' }]), now);
+  const s1 = since.sales.find((s) => s.id === 's1');
+  assert.strictEqual(s1.check, 'Sans achat correspondant', 'purchases are older than the tracking start');
+  assert.strictEqual(s1.profit, null);
+  assert.ok(since.warnings.some((w) => /sans achat correspondant/.test(w)));
+  const zero = Stats.compute(db, settingsWith([{ name: 'Triceratops', since: '2026-11-02' }], { valuation: { unmatched: 'zero' } }), now);
+  assert.strictEqual(zero.sales.find((s) => s.id === 's1').profit, 300);
+  // Category keyword (accents and case ignored).
+  db.cards[Extract.cardKey('Norvège')] = { title: 'Norvège', category: "Pays d'Europe du Nord", rarity: 'L' };
+  const cat = Stats.compute(db, Settings.normalize({ tracking: { cards: [], categories: [{ keyword: 'PAYS' }] } }), now);
+  assert.deepStrictEqual(cat.sales.filter((s) => s.tracked).map((s) => s.id), ['s3']);
+  assert.strictEqual(cat.sales.find((s) => s.id === 's3').profit, 350);
+});
+
+test('stats: commission and haircut', () => {
+  const { db, now } = scenario();
+  const m = Stats.compute(db, settingsWith(['Triceratops'], { valuation: { commissionPct: 10, haircutPct: 20 } }), now);
+  const s1 = m.sales.find((s) => s.id === 's1');
+  assert.strictEqual(s1.net, 270);
+  assert.strictEqual(s1.profit, 170);
+  assert.strictEqual(m.inventory[0].unitValue, 300 * 0.9 * 0.8);
+});
+
+test('stats: market listings value stock without recent sales', () => {
+  const { db, now, T } = scenario();
+  Store.mergeSync(db, { purchases: [{ id: 'p9', time: T(2, 12), card: 'Diplodocus', price: 2350 }], asks: [{ id: 'm1', card: 'Diplodocus', price: 1800 }] }, now - 3600e3);
+  const m = Stats.compute(db, settingsWith(['Triceratops', 'Diplodocus']), now);
+  const dip = m.inventory.find((i) => i.card === 'Diplodocus');
+  assert.deepStrictEqual([dip.unitValue, dip.valueSource], [1800, 'annonces en cours']);
+});
+
+test('stats: hours use Paris time and price indices', () => {
+  const { db, now } = scenario();
+  const m = Stats.compute(db, settingsWith(['Triceratops']), now);
+  assert.strictEqual(m.hours[10].purchases, 1);
+  assert.strictEqual(m.hours[11].purchases, 1);
+  assert.strictEqual(m.hours[10].buyIndex, 100 / 150);
+  assert.strictEqual(m.hours[18].sellRate, 1);
+  assert.strictEqual(m.hours[20].sellRate, 0);
+});
+
+test('stats on your real data: v1 import + site data', () => {
+  const db = Store.emptyDb();
+  const imp = Store.importV1(db, v1Rows());
+  Store.mergeSync(db, Extract.extract(fx.apiResponse()));
+  const m = Stats.compute(db, settingsWith(imp.trackedCards), P('03/11/2026 23:00'));
+  const t = m.cards.find((c) => c.card === 'Tyrannosaurus');
+  assert.deepStrictEqual([t.purchases, t.sold, t.profit], [1, 1, 504], 'same as the v1 "Par espèce" tab');
+  const v01 = m.sales.find((s) => s.label === 'V01');
+  assert.deepStrictEqual([v01.lot, v01.cost], ['A04', 1641]);
+  // Excluded rows from v1 stay out.
+  assert.strictEqual(m.purchases.find((p) => p.label === 'A02').tracked, false);
+  assert.ok(m.days.length >= 5);
+  assert.ok(m.days.every((d) => isFinite(d.trading) && isFinite(d.stockValue)));
+  assert.strictEqual(m.kpis.realizedTotal, m.days.reduce((s, d) => s + d.realized, 0));
+});
+
+/* ---------------------------------------------------------------- tables */
+
+test('tables: every row matches its headers; CSV for French Excel', () => {
+  const { db, now } = scenario();
+  const m = Stats.compute(db, settingsWith(['Triceratops']), now);
+  const tables = Tables.build(m);
+  assert.deepStrictEqual(tables.map((t) => t.name), ['Tableau de bord', 'Par jour', 'Inventaire', 'Par carte', 'Par heure',
+    'Inflation', 'Prix dans le temps', 'Achats', 'Ventes']);
+  tables.forEach((t) => {
+    assert.strictEqual(t.formats.length, t.headers.length, `${t.name} formats`);
+    t.rows.forEach((r) => assert.strictEqual(r.length, t.headers.length, `${t.name} row length`));
+    t.charts.forEach((c) => c.series.concat([c.domain]).forEach((i) => assert.ok(i < t.headers.length, `${t.name} chart column`)));
+  });
+  const csv = Tables.toCsv(tables.find((t) => t.name === 'Ventes'));
+  assert.ok(csv.startsWith('﻿ID;Date/heure;Carte'));
+  assert.ok(csv.includes('V01;02/11/2026 18:00;Triceratops;SR;300;Vendue;x;Oui;Non;A01;100;300;200;2;32;'));
+});
+
+/* ----------------------------------------------------------- Apps Script */
+
+function v1Spreadsheet() {
+  const achats = new FakeSheet('Achats', 999, 26);
+  ['ID', 'Date/heure', 'Carte', 'Rareté', 'Prix (W)', 'Vendeur', 'Inclure', 'Heure', 'Jour', 'N°', 'Indice', 'ID site']
+    .forEach((h, i) => { achats.cell(1, i + 1).v = h; });
+  const rows = v1Rows();
+  rows.purchases.forEach((r, i) => {
+    [r.label, new Date(r.time), r.card, r.rarity, r.price, r.party, r.inclure].forEach((v, c) => { achats.cell(i + 2, c + 1).v = v; });
+    achats.cell(i + 2, 12).v = r.siteId;
+  });
+  const ventes = new FakeSheet('Ventes', 998, 26);
+  ['ID', 'Date/heure', 'Carte', 'Rareté', 'Prix (W)', 'Statut', 'ID achat (FIFO)'].forEach((h, i) => { ventes.cell(1, i + 1).v = h; });
+  ventes.cell(1, 17).v = 'Acheteur';
+  ventes.cell(1, 18).v = 'ID site';
+  rows.sales.forEach((r, i) => {
+    [r.label, new Date(r.time), r.card, r.rarity, r.price, r.status].forEach((v, c) => { ventes.cell(i + 2, c + 1).v = v; });
+    ventes.cell(i + 2, 18).v = r.siteId;
+  });
+  const parEspece = new FakeSheet('Par espèce', 1000, 26);
+  parEspece.cell(1, 1).v = 'Synthèse';
+  const parHeure = new FakeSheet('Par heure', 1000, 26);
+  parHeure.cell(1, 1).v = 'Heure';
+  return new FakeSpreadsheet('WikiMasters', [achats, ventes, parEspece, parHeure]);
+}
+
+function runtime(ss) {
+  const gas = loadCodeGs(ss);
   gas.context.setup();
   const secret = gas.props.get('SECRET');
-  const call = (body) => gas.post(Object.assign({ secret }, body));
-  return Object.assign(env, { gas, secret, call });
+  return { gas, call: (body) => gas.post(Object.assign({ secret }, body)) };
 }
 
-const SETTINGS = { startDate: '2026-10-30', inclureDefault: 'Oui', matchWindowHours: 24, renumber: false };
-
-function syncBody(data, extra) {
-  const { purchases, sales } = extract(data);
-  return Object.assign({ action: 'sync', purchases, sales }, SETTINGS, extra || {});
-}
-
-const fmt = (d) => (Object.prototype.toString.call(d) === '[object Date]' ? formatDate(d, TZ, 'dd/MM/yyyy HH:mm') : d);
-
-/* ------------------------------------------------------------------------ */
-
-test('toMs handles 6 fractional digits and offsets', () => {
-  assert.strictEqual(toMs('2026-11-03T17:32:07.161979+00:00'), Date.UTC(2026, 10, 3, 17, 32, 7, 161));
-  assert.strictEqual(toMs('2026-11-03T17:32:07+00:00'), Date.UTC(2026, 10, 3, 17, 32, 7));
-  assert.strictEqual(toMs(null), null);
-  assert.strictEqual(toMs('garbage'), null);
+test('apps script: secret, ping and unknown action', () => {
+  const { gas, call } = runtime(v1Spreadsheet());
+  assert.match(gas.post({ secret: 'x', action: 'ping' }).error, /Secret incorrect/);
+  assert.deepStrictEqual([call({ action: 'ping' }).ok, call({ action: 'ping' }).version], [true, 2]);
+  assert.match(call({ action: 'merge' }).error, /Action inconnue/);
 });
 
-test('extract maps won/history to purchases/sales', () => {
-  const { purchases, sales, me } = extract(apiResponse());
-  assert.strictEqual(me, '205ffe34-550c-402d-b1ce-eabaf5ece82c');
-  assert.strictEqual(purchases.length, 38);
-  assert.strictEqual(sales.length, 50);
-  const tri = sales.find((s) => s.siteId.startsWith('13c0146a'));
-  assert.deepStrictEqual([tri.status, tri.price, tri.party], ['Non vendue', 1500, ''], 'unsold uses base_amount');
-  const giga = sales.find((s) => s.siteId.startsWith('c989f609'));
-  assert.deepStrictEqual([giga.status, giga.price, giga.party, giga.card], ['Vendue', 750, 'Jørgen15', 'Giganotosaurus']);
-  const t = purchases.find((p) => p.siteId.startsWith('fda70b88'));
-  assert.deepStrictEqual([t.card, t.rarity, t.price, t.party], ['Tyrannosaurus', 'UR', 1641, 'laure0756']);
-  assert.ok(purchases.every((p, i) => i === 0 || purchases[i - 1].time <= p.time), 'sorted by time');
+test('apps script: readV1 returns the v1 rows', () => {
+  const { call } = runtime(v1Spreadsheet());
+  const res = call({ action: 'readV1' });
+  assert.strictEqual(res.ok, true, res.error);
+  assert.deepStrictEqual(res.sheets, ['Achats', 'Ventes']);
+  assert.strictEqual(res.purchases.length, 21);
+  assert.strictEqual(res.sales.length, 23);
+  assert.deepStrictEqual(res.purchases[0], Object.assign({}, v1Rows().purchases[0]));
+  assert.strictEqual(res.sales[0].status, 'Vendue');
 });
 
-test('extract ignores active auctions and other users', () => {
-  const data = apiResponse();
-  data.history.push(Object.assign({}, data.history[0], { id: 'x1', status: 'active' }));
-  data.won.push(Object.assign({}, data.won[0], { id: 'x2', winner_id: 'someone-else' }));
-  const { purchases, sales } = extract(data);
-  assert.strictEqual(purchases.length, 38);
-  assert.strictEqual(sales.length, 50);
+test('apps script: write creates the template, archives v1 tabs, then reuses its tabs', () => {
+  const ss = v1Spreadsheet();
+  const { call } = runtime(ss);
+  const db = Store.emptyDb();
+  const imp = Store.importV1(db, call({ action: 'readV1' }));
+  Store.mergeSync(db, Extract.extract(fx.apiResponse()), P('03/11/2026 23:00'));
+  const m = Stats.compute(db, settingsWith(imp.trackedCards), P('03/11/2026 23:00'));
+  const tables = JSON.parse(JSON.stringify(Tables.build(m)));
+
+  const res = call({ action: 'write', tables });
+  assert.strictEqual(res.ok, true, res.error);
+  assert.deepStrictEqual(res.warnings.filter((w) => !/conservé/.test(w)), []);
+  const names = ss.getSheets().map((s) => s.getName());
+  assert.deepStrictEqual(names.slice(0, 9), ['Tableau de bord', 'Par jour', 'Inventaire', 'Par carte', 'Par heure', 'Inflation',
+    'Prix dans le temps', 'Achats', 'Ventes']);
+  assert.ok(names.includes('Achats (v1)') && names.includes('Ventes (v1)') && names.includes('Par heure (v1)') && names.includes('Par espèce'));
+
+  const ventes = ss.getSheetByName('Ventes');
+  assert.strictEqual(ventes.cell(1, 1).v, 'ID');
+  assert.strictEqual(ventes.cell(1, 1).bg, '#1f4e3d');
+  assert.strictEqual(ventes.getLastRow(), m.sales.length + 1);
+  assert.strictEqual(Object.prototype.toString.call(ventes.cell(2, 2).v), '[object Date]', 'dates converted');
+  assert.strictEqual(ventes.cell(2, 2).nf, 'dd/mm/yyyy hh:mm');
+  assert.ok(ventes.filter, 'filter on transaction tabs');
+  assert.strictEqual(ss.getSheetByName('Par carte').getCharts().length, 4);
+  assert.strictEqual(ss.getSheetByName('Par jour').getCharts().length, 3);
+  const chart = ss.getSheetByName('Par carte').getCharts()[1];
+  assert.deepStrictEqual(chart.ranges.map((r) => r[1]), [1, 4, 9], 'domain + avg buy + avg sell columns');
+
+  // Second write: same tabs, no new archive, charts replaced not duplicated.
+  const res2 = call({ action: 'write', tables });
+  assert.strictEqual(res2.ok, true);
+  assert.deepStrictEqual(res2.warnings, []);
+  assert.strictEqual(ss.getSheets().length, names.length);
+  assert.strictEqual(ss.getSheetByName('Par carte').getCharts().length, 4);
+
+  // readV1 still finds the archived v1 rows after the migration.
+  const again = call({ action: 'readV1' });
+  assert.deepStrictEqual(again.sheets, ['Achats (v1)', 'Ventes (v1)']);
 });
 
-test('extract rejects answers without history/won', () => {
-  assert.throws(() => extract({ auctions: [] }), /logged in/);
+test('apps script: write on an empty spreadsheet (template for new players)', () => {
+  const ss = new FakeSpreadsheet('Nouveau', [new FakeSheet('Feuille 1', 1000, 26)]);
+  const { call } = runtime(ss);
+  const m = Stats.compute(Store.emptyDb(), Settings.normalize({}), Date.now());
+  const res = call({ action: 'write', tables: JSON.parse(JSON.stringify(Tables.build(m))) });
+  assert.strictEqual(res.ok, true, res.error);
+  assert.strictEqual(ss.getSheets().length, 10);
+  assert.strictEqual(ss.getSheetByName('Achats').cell(1, 3).v, 'Carte');
 });
 
-test('wrong secret is refused', () => {
-  const env = newRuntime();
-  const res = env.gas.post({ secret: 'nope', action: 'ping' });
+test('apps script: malformed tables are refused', () => {
+  const { call } = runtime(new FakeSpreadsheet('X', []));
+  const res = call({ action: 'write', tables: [{ name: 'T', headers: ['a', 'b'], rows: [[1]] }] });
   assert.strictEqual(res.ok, false);
-  assert.match(res.error, /Wrong secret/);
-});
-
-test('ping reports the spreadsheet', () => {
-  const env = newRuntime();
-  const res = env.call({ action: 'ping' });
-  assert.strictEqual(res.ok, true);
-  assert.deepStrictEqual(res.sheets.map((s) => s.found), [true, true]);
-});
-
-test('first sync: dry run writes nothing and reports the plan', () => {
-  const env = newRuntime();
-  const before = env.achats.snapshot() + env.ventes.snapshot();
-  const res = env.call(syncBody(apiResponse(), { dryRun: true }));
-  assert.strictEqual(res.ok, true, res.error);
-  assert.strictEqual(env.achats.snapshot() + env.ventes.snapshot(), before, 'sheet untouched');
-  assert.strictEqual(env.gas.props.has('CUTOFF_Achats'), false, 'cutoff not stored by a dry run');
-
-  const p = res.purchases.stats;
-  assert.deepStrictEqual(p, { received: 38, alreadyKnown: 0, beforeStart: 4, matched: 21, added: 13 });
-  const s = res.sales.stats;
-  assert.deepStrictEqual(s, { received: 50, alreadyKnown: 0, beforeStart: 0, matched: 22, added: 28 });
-
-  // Every hand-entered purchase is linked to the right auction.
-  const byId = Object.fromEntries(res.purchases.matched.map((m) => [m.id, m]));
-  assert.strictEqual(Object.keys(byId).length, 21);
-  assert.strictEqual(byId.A18.siteDate, '03/11/2026 12:02', 'A18 CuteName');
-  assert.strictEqual(byId.A21.siteDate, '03/11/2026 17:02', 'A21 brunolegros');
-  assert.strictEqual(byId.A01.siteDate, '31/10/2026 10:42', 'A01 Himmel_');
-
-  // Hand-entered sales: V01 (too old for the site) is the only one left alone.
-  const salesById = Object.fromEntries(res.sales.matched.map((m) => [m.id, m]));
-  assert.ok(!salesById.V01);
-  assert.strictEqual(Object.keys(salesById).length, 22);
-  assert.strictEqual(salesById.V05.siteDate, '01/11/2026 12:56');
-  assert.ok(salesById.V05.notes.some((n) => /status/.test(n)), 'V05 status difference reported');
-  assert.strictEqual(salesById.V14.siteDate, '02/11/2026 21:34');
-  assert.strictEqual(salesById.V13.siteDate, '02/11/2026 18:30');
-  assert.strictEqual(salesById.V17.siteDate, '02/11/2026 23:04');
-  assert.strictEqual(salesById.V22.siteDate, '03/11/2026 18:31');
-
-  // Backfilled purchases get Inclure = Non.
-  assert.ok(res.purchases.added.every((a) => a.inclure === 'Non'));
-  assert.ok(res.warnings.some((w) => /Inclure = "Non"/.test(w)));
-});
-
-test('first sync: real run merges chronologically and keeps formulas', () => {
-  const env = newRuntime();
-  const res = env.call(syncBody(apiResponse()));
-  assert.strictEqual(res.ok, true, res.error);
-
-  const A = env.achats;
-  // Headers: "ID site" created in L and hidden; nothing else changed in row 1.
-  assert.strictEqual(A.cell(1, 12).v, 'ID site');
-  assert.strictEqual(A.cell(1, 12).fmt, 'header');
-  assert.ok(A.hidden.has(12));
-  const rowsA = A.dump([1, 2, 3, 4, 5, 6, 7, 12]);
-  assert.strictEqual(rowsA.length, 21 + 13);
-  // Chronological except where the hand-entered order already differs (A04/A05).
-  const ids = rowsA.map((r) => r[0]);
-  assert.deepStrictEqual(ids.slice(0, 5), ['A22', 'A23', 'A24', 'A01', 'A25'],
-    'Gasproutine, MewiSecler, SURPRYZ before A01, then vedved');
-  assert.strictEqual(new Set(ids).size, ids.length, 'unique IDs');
-  // Hand-entered values are untouched, only "ID site" is filled.
-  const a01 = rowsA.find((r) => r[0] === 'A01');
-  assert.deepStrictEqual([fmt(a01[1]), a01[2], a01[4], a01[5], a01[6]], ['30/10/2026 23:44', 'Velociraptor', 549, 'Himmel_', 'Non']);
-  assert.ok(String(a01[7]).startsWith('a9def0fb'));
-  assert.ok(rowsA.every((r) => r[7]), 'every row has a site id');
-  const a22 = rowsA[0];
-  assert.deepStrictEqual([fmt(a22[1]), a22[2], a22[3], a22[4], a22[5], a22[6]],
-    ['30/10/2026 00:15', 'Triceratops', 'SR', 910, 'Gasproutine', 'Non']);
-  // ARRAYFORMULAs untouched, formats/validation copied to the new rows.
-  assert.match(A.cell(2, 8).f, /^=ARRAYFORMULA/);
-  assert.strictEqual(A.cell(35, 1).fmt, 'data');
-  assert.strictEqual(A.cell(35, 7).dv, 'Oui/Non');
-  // Filter now covers all rows and the new column.
-  assert.deepStrictEqual([A.filter.range.getLastRow(), A.filter.range.getLastColumn()], [35, 12]);
-
-  const V = env.ventes;
-  assert.deepStrictEqual([V.cell(1, 17).v, V.cell(1, 18).v], ['Acheteur', 'ID site']);
-  assert.ok(V.hidden.has(18) && !V.hidden.has(17));
-  const rowsV = V.dump([1, 2, 3, 4, 5, 6, 17, 18]);
-  assert.strictEqual(rowsV.length, 23 + 28);
-  // Buyer filled in for hand-entered sold rows.
-  const v23 = rowsV.find((r) => r[0] === 'V23');
-  assert.strictEqual(v23[6], 'Jørgen15');
-  const v05 = rowsV.find((r) => r[0] === 'V05');
-  assert.deepStrictEqual([v05[5], v05[6]], ['Non vendue', ''], 'status of hand-entered row is not changed');
-  // Per-row FIFO formula copied to the new rows with adjusted references.
-  for (let r = 2; r <= 52; r++) assert.strictEqual(V.cell(r, 7).f, FIFO(r), `FIFO formula row ${r}`);
-  assert.strictEqual(V.cell(53, 7).f, '');
-  // Sales are in chronological order (hand-entered order was already chronological).
-  const times = rowsV.map((r) => r[1].getTime());
-  for (let i = 1; i < times.length; i++) {
-    if (times[i] < times[i - 1]) {
-      // Only allowed where an existing hand-entered row is later than the site date.
-      assert.ok(/^V(0[1-9]|1\d|2[0-3])$/.test(rowsV[i - 1][0]) || /^V(0[1-9]|1\d|2[0-3])$/.test(rowsV[i][0]),
-        `out of order at ${rowsV[i][0]}`);
-    }
-  }
-  assert.deepStrictEqual([V.filter.range.getLastRow(), V.filter.range.getLastColumn()], [52, 18]);
-  assert.strictEqual(env.gas.props.get('CUTOFF_Achats'), String(parisDate('03/11/2026 16:57').getTime()));
-});
-
-test('second sync with the same data adds nothing', () => {
-  const env = newRuntime();
-  env.call(syncBody(apiResponse()));
-  const snapshot = env.achats.snapshot() + env.ventes.snapshot();
-  const res = env.call(syncBody(apiResponse()));
-  assert.strictEqual(res.ok, true, res.error);
-  assert.deepStrictEqual(res.purchases.stats, { received: 38, alreadyKnown: 34, beforeStart: 4, matched: 0, added: 0 });
-  assert.deepStrictEqual(res.sales.stats, { received: 50, alreadyKnown: 50, beforeStart: 0, matched: 0, added: 0 });
-  assert.strictEqual(env.achats.snapshot() + env.ventes.snapshot(), snapshot, 'sheet unchanged');
-});
-
-test('later sync appends new transactions with the default Inclure', () => {
-  const env = newRuntime();
-  env.call(syncBody(apiResponse()));
-  const data = apiResponse({
-    history: [
-      ['aaaa0001', '2026-11-04T09:00:00', 'Triceratops', 'SR', 'S', 1400, 'Bob'],
-      ['aaaa0002', '2026-11-04T10:00:00', 'Diplodocus', 'SR', 'U', 2500]
-    ],
-    won: [
-      ['bbbb0001', '2026-11-04T08:00:00', 'Triceratops', 'SR', 1100, 'Alice'],
-      ['bbbb0002', '2026-11-04T08:30:00', 'Stegosaurus', 'SR', 500, 'Carol']
-    ]
-  });
-  const res = env.call(syncBody(data));
-  assert.strictEqual(res.ok, true, res.error);
-  assert.strictEqual(res.purchases.stats.added, 2);
-  assert.strictEqual(res.sales.stats.added, 2);
-  const rowsA = env.achats.dump([1, 2, 3, 7]);
-  assert.deepStrictEqual(rowsA.slice(-2).map((r) => [r[0], r[2], r[3]]), [['A35', 'Triceratops', 'Oui'], ['A36', 'Stegosaurus', 'Oui']]);
-  const rowsV = env.ventes.dump([1, 3, 6, 17]);
-  assert.deepStrictEqual(rowsV.slice(-2), [['V52', 'Triceratops', 'Vendue', 'Bob'], ['V53', 'Diplodocus', 'Non vendue', '']]);
-  assert.strictEqual(env.ventes.cell(54, 7).f, FIFO(54));
-  assert.strictEqual(res.warnings.length, 0);
-});
-
-test('"auto" Inclure follows the card history', () => {
-  const env = newRuntime();
-  env.call(syncBody(apiResponse()));
-  const data = apiResponse({
-    history: [],
-    won: [
-      ['cccc0001', '2026-11-04T08:00:00', 'Giganotosaurus', 'SR', 400, 'Alice'],
-      ['cccc0002', '2026-11-04T08:30:00', 'Allemagne', 'L', 1800, 'Carol']
-    ]
-  });
-  const res = env.call(syncBody(data, { inclureDefault: 'auto' }));
-  assert.deepStrictEqual(res.purchases.added.map((a) => [a.card, a.inclure]), [['Giganotosaurus', 'Oui'], ['Allemagne', 'Non']]);
-});
-
-test('renumber option rewrites IDs in row order', () => {
-  const env = newRuntime();
-  env.call(syncBody(apiResponse(), { renumber: true }));
-  const ids = env.achats.dump([1]).map((r) => r[0]);
-  assert.deepStrictEqual(ids.slice(0, 3), ['A01', 'A02', 'A03']);
-  assert.strictEqual(ids[ids.length - 1], 'A34');
-  const vIds = env.ventes.dump([1]).map((r) => r[0]);
-  assert.strictEqual(vIds[vIds.length - 1], 'V51');
-});
-
-test('no start date imports everything the site returns', () => {
-  const env = newRuntime();
-  const res = env.call(syncBody(apiResponse(), { startDate: '', dryRun: true }));
-  assert.strictEqual(res.purchases.stats.beforeStart, 0);
-  assert.strictEqual(res.purchases.stats.added, 17);
-});
-
-test('missing column is reported clearly', () => {
-  const env = newRuntime();
-  env.ventes.cell(1, 6).v = 'State';
-  const res = env.call(syncBody(apiResponse(), { dryRun: true }));
-  assert.strictEqual(res.ok, false);
-  assert.match(res.error, /Ventes.*Statut/);
-});
-
-test('helper column is not created over existing data', () => {
-  const env = newRuntime();
-  env.achats.cell(1, 12).v = 'Notes';
-  // "Notes" is now the last header, so "ID site" goes to M: no conflict.
-  const res = env.call(syncBody(apiResponse()));
-  assert.strictEqual(res.ok, true, res.error);
-  assert.strictEqual(env.achats.cell(1, 13).v, 'ID site');
-});
-
-test('incomplete items are ignored with a warning', () => {
-  const env = newRuntime();
-  const body = syncBody(apiResponse({ history: [], won: [] }));
-  body.purchases = [{ siteId: 'z', time: Date.now(), card: '', price: 1 }];
-  const res = env.call(body);
-  assert.strictEqual(res.ok, true);
-  assert.strictEqual(res.purchases.stats.received, 0);
-  assert.ok(res.warnings.some((w) => /incomplete/.test(w)));
-});
-
-test('rows inserted near the cutoff use the stored cutoff, not the new last row', () => {
-  const env = newRuntime();
-  env.call(syncBody(apiResponse()));
-  const data = apiResponse({ history: [], won: [['dddd0001', '2026-11-03T15:00:00', 'Triceratops', 'SR', 999, 'Late']] });
-  const res = env.call(syncBody(data));
-  // 16:00 Paris is before the last hand-entered purchase (16:57): treated as backfill.
-  assert.deepStrictEqual(res.purchases.added.map((a) => a.inclure), ['Non']);
-  void uuid; void iso;
+  assert.match(res.error, /colonnes/);
 });
 
 console.log(`\n${passed} test(s) passed${process.exitCode ? ', some FAILED' : ''}.`);

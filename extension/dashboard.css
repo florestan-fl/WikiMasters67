@@ -1,0 +1,88 @@
+body { min-height: 100vh; }
+
+.top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 16px 24px 8px;
+  max-width: 1280px;
+  margin: 0 auto;
+}
+.top-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 24px;
+  max-width: 1280px;
+  margin: 0 auto;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+.tabs button {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: none;
+  padding: 10px 12px;
+  color: var(--fg-2);
+  white-space: nowrap;
+}
+.tabs button[aria-selected="true"] {
+  color: var(--fg);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+main {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 16px 24px 48px;
+}
+main section { display: flex; flex-direction: column; gap: 14px; }
+main section[hidden] { display: none; }
+
+.filters {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.filters input[type=search] { min-width: 220px; }
+label.check { display: inline-flex; gap: 6px; align-items: center; }
+
+.seg { display: inline-flex; border: 1px solid var(--border-strong); border-radius: 8px; overflow: hidden; }
+.seg button { border: 0; border-radius: 0; padding: 5px 12px; background: var(--surface); }
+.seg button + button { border-left: 1px solid var(--border-strong); }
+.seg button[aria-pressed="true"] { background: var(--surface-2); font-weight: 600; }
+
+.charts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(460px, 1fr));
+  gap: 14px;
+}
+figure.chart { margin: 0; }
+figure.chart figcaption { display: flex; flex-direction: column; gap: 2px; margin-bottom: 8px; }
+figure.chart h3 { margin: 0; }
+.chart-box { position: relative; height: 300px; }
+.chart-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 0 20px;
+}
+.chart-empty[hidden] { display: none; }
+
+.card > .table-wrap, #cards-table .table-wrap, #tx-table .table-wrap, #days-table .table-wrap { max-height: 520px; }
+.card table { font-size: 12.5px; }
+
+@media (max-width: 560px) {
+  .top, .tabs, main { padding-left: 16px; padding-right: 16px; }
+  .charts { grid-template-columns: 1fr; }
+  .chart-box { height: 240px; }
+}

@@ -1,4 +1,4 @@
-/* global browser */
+/* global browser, WMStore, WMStats, WMSettings, WMTime, WMFormat */
 'use strict';
 
 const ORIGINS = [
@@ -8,58 +8,31 @@ const ORIGINS = [
   'https://script.googleusercontent.com/*'
 ];
 
+const F = WMFormat;
 const $ = (id) => document.getElementById(id);
-
-function el(tag, attrs, ...children) {
-  const node = document.createElement(tag);
-  if (attrs) {
-    for (const [k, v] of Object.entries(attrs)) {
-      if (k === 'class') node.className = v;
-      else if (k === 'text') node.textContent = v;
-      else node.setAttribute(k, v);
-    }
-  }
-  for (const c of children) {
-    if (c === null || c === undefined || c === false) continue;
-    node.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
-  }
-  return node;
-}
-
-function fmtDateTime(ms) {
-  if (!ms) return '';
-  return new Date(ms).toLocaleString('fr-FR', {
-    timeZone: 'Europe/Paris', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
-  });
-}
-
-function fmtNum(n) {
-  return typeof n === 'number' ? n.toLocaleString('fr-FR') : String(n ?? '');
-}
-
-/* ------------------------------------------------------------------------ */
 
 async function init() {
   $('open-options').addEventListener('click', openOptions);
   $('open-options-2').addEventListener('click', openOptions);
   $('grant').addEventListener('click', grant);
-  $('preview').addEventListener('click', () => start(true));
-  $('sync').addEventListener('click', () => start(false));
+  $('sync').addEventListener('click', sync);
+  $('dashboard').addEventListener('click', () => {
+    browser.tabs.create({ url: browser.runtime.getURL('dashboard.html') });
+    window.close();
+  });
 
   browser.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local') return;
     if (changes.syncState) renderState(changes.syncState.newValue);
     if (changes.lastResult) renderResult(changes.lastResult.newValue);
-    if (changes.lastSync) renderLastSync(changes.lastSync.newValue);
+    if (changes.db || changes.settings || changes.lastSync || changes.lastExport) refresh();
   });
 
-  const { settings, syncState, lastResult, lastSync } =
-    await browser.storage.local.get(['settings', 'syncState', 'lastResult', 'lastSync']);
-  $('setup').hidden = !!(settings && settings.scriptUrl && settings.secret);
+  const { syncState, lastResult } = await browser.storage.local.get(['syncState', 'lastResult']);
   await checkPermissions();
   renderState(syncState);
   renderResult(lastResult);
-  renderLastSync(lastSync);
+  await refresh();
 }
 
 function openOptions(e) {
@@ -82,106 +55,75 @@ async function grant() {
   }
 }
 
-async function start(dryRun) {
+async function sync() {
   if (!(await checkPermissions())) return;
-  renderState({ running: true, dryRun });
+  renderState({ running: true });
   try {
-    await browser.runtime.sendMessage({ type: 'sync', dryRun });
+    await browser.runtime.sendMessage({ type: 'sync' });
   } catch (e) {
     renderResult({ ok: false, error: String((e && e.message) || e) });
     renderState({ running: false });
   }
 }
 
-/* ------------------------------------------------------------------------ */
+async function refresh() {
+  const { db, settings, lastSync, lastExport } = await browser.storage.local.get(['db', 'settings', 'lastSync', 'lastExport']);
+  const s = WMSettings.normalize(settings);
+  $('no-cards').hidden = !!(s.tracking.cards.length || s.tracking.categories.length);
+  const m = WMStats.compute(WMStore.normalizeDb(db || WMStore.emptyDb()), s, Date.now());
+  const k = m.kpis;
+  const tiles = $('tiles');
+  tiles.textContent = '';
+  tiles.append(
+    F.tile("Profit réalisé aujourd'hui", F.signedUnit(k.realizedToday), `7 jours : ${F.signedUnit(k.realized7)}`, F.signClass(k.realizedToday)),
+    F.tile("Trading estimé aujourd'hui", F.signedUnit(k.tradingToday), `Moyenne 7 j : ${F.signedUnit(k.tradingPerDay7)}/jour`, F.signClass(k.tradingToday)),
+    F.tile('Valeur du stock', F.wUnit(k.stockValue), `${k.stockQty} carte(s) · latent ${F.signedUnit(k.unrealized)}`),
+    F.tile('Patrimoine estimé', F.wUnit(k.netWorth), k.balance === null ? 'Solde pas encore relevé' : `Solde ${F.wUnit(k.balance)} + stock`)
+  );
+  const parts = [lastSync && lastSync.at ? `Dernière mise à jour : ${WMTime.formatDateTime(lastSync.at)}` : 'Jamais mis à jour.'];
+  if (WMSettings.sheetsConfigured(s)) {
+    parts.push(lastExport && lastExport.at ? `Export Sheets : ${WMTime.formatDateTime(lastExport.at)}` : 'Export Sheets : jamais');
+  }
+  $('footer').textContent = parts.join(' · ');
+}
 
 function renderState(state) {
   const busy = !!(state && state.running);
-  $('preview').disabled = busy;
   $('sync').disabled = busy;
-  $('status').textContent = busy
-    ? (state.dryRun ? 'Preparing preview…' : 'Updating the sheet…')
-    : '';
-}
-
-function renderLastSync(lastSync) {
-  $('last-sync').textContent = lastSync && lastSync.at
-    ? `Last update: ${fmtDateTime(lastSync.at)}`
-    : 'Never updated yet. Start with “Preview”.';
+  $('status').textContent = busy ? 'Mise à jour en cours…' : '';
 }
 
 function renderResult(r) {
   const box = $('result');
   box.textContent = '';
   if (!r) return;
-
   if (!r.ok) {
-    box.appendChild(el('div', { class: 'notice err', text: r.error || 'Unknown error.' }));
+    box.append(F.el('div', { class: 'notice err', text: r.error || 'Erreur inconnue.' }));
     return;
   }
+  const np = r.added.purchases.length;
+  const ns = r.added.sales.length;
+  const head = np + ns
+    ? `${np} achat(s) et ${ns} vente(s) ajoutés.`
+    : 'Rien de nouveau depuis la dernière mise à jour.';
+  const exp = r.exported === true ? ' Feuille Google mise à jour.' : '';
+  box.append(F.el('div', { class: 'small secondary', text: `${WMTime.formatDateTime(r.finishedAt)} · ${head}${exp}` }));
+  for (const w of r.warnings || []) box.append(F.el('div', { class: 'notice warn', text: w }));
 
-  box.appendChild(el('div', { class: 'small muted' },
-    `${r.dryRun ? 'Preview' : 'Update'} of ${fmtDateTime(r.finishedAt)} · read ${r.fetched.purchases} purchases and ${r.fetched.sales} sales from the site.`));
-
-  if (r.dryRun) {
-    box.appendChild(el('div', { class: 'notice ok' }, 'Preview only: nothing was written. Click “Update sheet” to apply.'));
+  const rows = r.added.purchases.map((x) => Object.assign({ kind: 'Achat' }, x))
+    .concat(r.added.sales.map((x) => Object.assign({ kind: x.status === 'Vendue' ? 'Vente' : 'Invendu' }, x)))
+    .sort((a, b) => b.time - a.time);
+  if (rows.length) {
+    box.append(F.el('div', { class: 'added' },
+      F.table([
+        { label: 'Date', value: (x) => WMTime.formatDateTime(x.time), cls: () => 'nowrap' },
+        { label: 'Type', value: (x) => x.kind },
+        { label: 'Carte', value: (x) => x.card },
+        { label: 'Prix', value: (x) => x.price, format: F.w, num: true },
+        { label: 'Profit', value: (x) => x.profit, format: (v) => (v === null || v === undefined ? '' : F.signed(v)), num: true, cls: (x, v) => F.signClass(v) }
+      ], rows, { maxHeight: '200px', rowClass: (x) => (x.tracked ? null : 'dim') }),
+      F.el('div', { class: 'small muted', text: 'En gris : cartes non suivies.' })));
   }
-
-  for (const w of r.warnings || []) box.appendChild(el('div', { class: 'notice warn', text: w }));
-
-  box.appendChild(sheetBlock(r.purchases, 'purchases', r.dryRun));
-  box.appendChild(sheetBlock(r.sales, 'sales', r.dryRun));
-}
-
-function sheetBlock(s, kind, dryRun) {
-  if (!s) return el('div');
-  const st = s.stats;
-  const verb = dryRun ? 'to add' : 'added';
-  const counts = el('div', { class: 'counts' },
-    el('b', { text: `${st.added} ${verb}` }),
-    ` · ${st.matched} matched to existing rows · ${st.alreadyKnown} already in the sheet`,
-    st.beforeStart ? ` · ${st.beforeStart} before the start date` : ''
-  );
-
-  const block = el('div', { class: 'sheet-summary' },
-    el('div', { class: 'title' }, el('span', { text: s.sheet }), el('span', { class: 'muted small', text: `${st.received} read` })),
-    counts
-  );
-
-  if (s.added && s.added.length) {
-    const head = ['ID', 'Date', 'Card', 'Price', kind === 'sales' ? 'Status' : 'Inclure', kind === 'sales' ? 'Buyer' : 'Seller'];
-    const rows = s.added.map((a) => [
-      a.id, { nowrap: a.date }, a.card, { num: a.price },
-      kind === 'sales' ? a.status : a.inclure, a.party
-    ]);
-    block.appendChild(details(`Rows ${verb} (${s.added.length})`, table(head, rows), true));
-  }
-
-  if (s.matched && s.matched.length) {
-    const head = ['ID', 'Card', 'Price', 'Sheet date', 'Site date', 'Notes'];
-    const rows = s.matched.map((m) => [m.id, m.card, { num: m.price }, { nowrap: m.sheetDate }, { nowrap: m.siteDate }, (m.notes || []).join('; ')]);
-    const withNotes = s.matched.filter((m) => m.notes && m.notes.length).length;
-    const label = `Existing rows linked to the site (${s.matched.length}${withNotes ? `, ${withNotes} with differences` : ''})`;
-    block.appendChild(details(label, table(head, rows), false));
-  }
-  return block;
-}
-
-function details(label, content, open) {
-  const d = el('details', null, el('summary', { text: label }), el('div', { class: 'table-wrap' }, content));
-  if (open) d.open = true;
-  return d;
-}
-
-function table(head, rows) {
-  return el('table', null,
-    el('thead', null, el('tr', null, ...head.map((h) => el('th', { text: h })))),
-    el('tbody', null, ...rows.map((cells) => el('tr', null, ...cells.map((c) => {
-      if (c && typeof c === 'object' && 'num' in c) return el('td', { class: 'num', text: fmtNum(c.num) });
-      if (c && typeof c === 'object' && 'nowrap' in c) return el('td', { class: 'nowrap', text: String(c.nowrap || '') });
-      return el('td', { text: c === null || c === undefined ? '' : String(c) });
-    }))))
-  );
 }
 
 init();
