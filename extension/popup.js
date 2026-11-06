@@ -1,4 +1,4 @@
-/* global browser, WMStore, WMSettings, WMTime, WMFormat */
+/* global browser, WMStore, WMMarket, WMStats, WMSettings, WMTime, WMFormat */
 'use strict';
 
 const ORIGINS = [
@@ -71,7 +71,7 @@ function item(state, title, detail) {
 }
 
 async function render() {
-  const data = await browser.storage.local.get(['db', 'settings', 'exportState', 'lastExport']);
+  const data = await browser.storage.local.get(['db', 'settings', 'exportState', 'lastExport', 'resolver']);
   const db = WMStore.normalizeDb(data.db || WMStore.emptyDb());
   const settings = WMSettings.normalize(data.settings);
   const meta = db.meta;
@@ -101,6 +101,24 @@ async function render() {
     `${auctions} enchère(s) en mémoire${open ? ` · ${siteTabs.length} onglet(s) WikiMasters ouvert(s)` : ' · aucun onglet WikiMasters ouvert'}`
   ));
 
+  // 2b. Final prices of ended auctions.
+  const match = WMStats.makeMatcher(settings, db);
+  const pending = WMMarket.pendingChecks(db, Date.now(), (c) => !!match(c));
+  if (settings.market.autoResolve) {
+    const r = data.resolver && data.resolver.day === WMTime.dayKey(Date.now()) ? data.resolver : { count: 0, resolved: 0 };
+    let perm = true;
+    try { perm = await browser.permissions.contains({ permissions: ['scripting'] }); } catch (e) { perm = false; }
+    const capped = r.count >= settings.market.resolveMaxPerDay;
+    status.append(item(
+      !perm ? 'err' : !open || capped ? 'warn' : 'ok',
+      !perm ? 'Relevé automatique : permission manquante' : !open ? 'Relevé automatique : en pause' : capped ? 'Relevé automatique : maximum du jour atteint' : 'Relevé automatique : actif',
+      `${pending.ended.length} prix final à relever · aujourd'hui ${r.count}/${settings.market.resolveMaxPerDay} requêtes, ${r.resolved || 0} relevé(s)${!open ? ' · ouvrez un onglet du jeu' : ''}`
+    ));
+  } else if (pending.ended.length) {
+    status.append(item('', `${pending.ended.length} enchère(s) terminée(s) à vérifier`,
+      'Prix final pas encore vu : liste dans l\'onglet Marché, ou activez le relevé automatique dans les paramètres.'));
+  }
+
   // 3. Balance.
   const snap = db.snapshots[db.snapshots.length - 1];
   status.append(item(snap ? 'ok' : '', snap ? `Solde : ${F.wUnit(snap.balance)}` : 'Solde : pas encore lu',
@@ -118,6 +136,10 @@ async function render() {
   } else {
     $('export').hidden = true;
   }
+
+  $('how').textContent = settings.market.autoResolve
+    ? "Vos données arrivent quand vous ouvrez le Marché. Relevé automatique activé : l'extension envoie aussi au jeu une requête par enchère terminée de vos cartes suivies."
+    : "Les données arrivent quand vous ouvrez le Marché de WikiMasters : l'extension lit les réponses que votre navigateur reçoit, sans rien envoyer au jeu.";
 
   // Notices.
   const notices = $('notices');

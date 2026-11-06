@@ -8,15 +8,16 @@ A Firefox extension for [WikiMasters](https://www.wiki-masters.com/) players who
 
 Every player picks their own cards in the settings. Nothing in the code or the spreadsheet is specific to one player.
 
-## Passive: the extension sends nothing to the game
+## Passive by default
 
-The extension **never** makes a request to wiki-masters.com: no API call, no background tab, no automatic page reload. It only reads what **your** browser already receives while you play:
+By default the extension **never** makes a request to wiki-masters.com: no API call, no background tab, no automatic page reload. It only reads what **your** browser already receives while you play. The one exception is the optional automatic reading of final prices, described below, which is off by default.
 
 | What | How | Visible to the site? |
 |---|---|---|
 | Your purchases (*Gagnées*), sales (*Historique*), active listings, auctions shown on the Marché | When **your** Marché page loads `/api/marketplace…`, Firefox gives the extension a copy of the response while passing it **unchanged** to the page (`webRequest.filterResponseData`) | No |
 | Your wikibidous balance | Read from the page header by the content script (read only) | No |
 | Market badge under the prices (optional) | Small elements **added** under "Mise actuelle / Mise de départ". The game's text is never modified | **Yes**: it's the only change on the page. Turn it off in *Paramètres → Prix du marché* |
+| Final prices of ended auctions (optional, **off** by default) | One request per auction of a followed card, at a fixed interval (see below) | **Yes**: these are requests sent by the extension |
 
 So, to record your transactions, **open the Marché at least every 2 days**. The site only lists your last 50 purchases and 50 sales, and the extension warns you if some may have been missed.
 
@@ -25,10 +26,22 @@ So, to record your transactions, **open the Marché at least every 2 days**. The
 ### Where market prices come from
 
 * **Your sales** (Historique).
-* **Other players' sales** when you see them: an ended auction you open, a search, and so on.
+* **Other players' sales** whose final price was seen: an ended auction you open, or the automatic reading below.
+* **Estimates "≈"**: when an auction you saw with a bid less than 30 minutes before its end finishes without its final price being seen, that last bid is counted as an estimated sale. It is a minimum, since a last-second outbid is missed. Shown separately, and it can be left out of the median (*Paramètres → Prix du marché*).
 * **Current listings** seen while browsing the Marché ("Moins chère en vente", the cheapest listing currently for sale).
 
-Unlike tools that revisit ended auctions automatically, the extension only knows the sales you have seen. The median becomes reliable as you play.
+### Final prices of ended auctions
+
+Every auction of a followed card that you see while browsing is queued. When it ends:
+
+* **Automatic reading off (default):** the extension sends nothing. The auction appears in the **À vérifier** list of the Marché tab (end time, last bid seen, an "Ouvrir ↗" link). Opening it is enough to record the final price.
+* **Automatic reading on** (*Paramètres → Prix du marché*, Firefox asks for the "scripting" permission). The extension asks the game itself for each ended auction:
+  * one request per auction (`/api/marketplace/<id>`, the same data the auction page loads), sent from your open game tab with your session, never more than one at a time;
+  * only while a game tab is open, with a **fixed** interval (60 s by default, 30 s minimum) and a daily cap (300 by default);
+  * an auction extended by late bids is re-timed to its new end;
+  * with no answer, it is retried 30 minutes later and dropped after 3 attempts.
+
+  These requests do **not** try to look like a person: no random delays, no fake page views. If the game looks at timing, it can tell it is automated. The rules forbid scripts, so turning this on is your own risk for your account. Its status shows in the popup and the settings.
 
 ## The screens
 
@@ -84,6 +97,7 @@ For a public listing with automatic updates, choose **On this site** instead (re
 * *wiki-masters.com*: to read the responses your pages receive, and to add the badges.
 * *script.google.com*: only for the optional Google Sheets export.
 * "Read and modify network requests" (`webRequest`): needed to copy the Marché responses. The extension only reads `/api/marketplace…` and forwards them unchanged.
+* *scripting* (optional, requested only when you turn on the automatic reading of final prices): to send those requests from your game tab.
 
 ### First run
 
@@ -119,7 +133,7 @@ When `Code.gs` changes: **Deploy → Manage deployments → ✏️ → Version: 
 
 ```bash
 node test/run-tests.js        # extraction, database, market, statistics, tables, Apps Script (fake runtime, real data)
-node test/background-test.js  # passive capture end-to-end: fake stream filter, no request to the game allowed
+node test/background-test.js  # end-to-end: passive capture (no request to the game allowed), optional resolver (spacing, cap, retries)
 npx web-ext lint --source-dir extension
 ```
 
@@ -128,10 +142,10 @@ npx web-ext lint --source-dir extension
 ```
 extension/
   manifest.json
-  background.js        passive capture (filterResponseData), database, export, tab reuse
+  background.js        passive capture (filterResponseData), optional final-price resolver, database, export, tab reuse
   content/site.js      balance read, market badges under the prices (optional)
   lib/extract.js       your lists (won / history / selling) → records
-  lib/market.js        auctions seen → market prices (median, P25–P75, trend, cheapest listing)
+  lib/market.js        auctions seen → market prices (median, P25–P75, trend, cheapest listing), estimates, "À vérifier" queue
   lib/store.js         local database (insert-only, v1 import, exclusions, backups)
   lib/stats.js         FIFO, stock valuation, per day / card / hour statistics
   lib/tables.js        tables for Google Sheets and CSV

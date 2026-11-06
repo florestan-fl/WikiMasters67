@@ -28,6 +28,8 @@
       cards: {},
       auctions: {},
       marketSales: {},
+      marketEstimates: {},
+      checks: {},
       listings: [],
       snapshots: [],
       counters: { A: 0, V: 0 },

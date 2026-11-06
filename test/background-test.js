@@ -56,6 +56,18 @@ async function main() {
     throw new Error(`unexpected fetch ${url}`);
   }
 
+  // Requests made FROM THE GAME PAGE by the optional resolver (scripting.executeScript).
+  const pageRequests = [];
+  const pageResponses = {};
+  let permissionGranted = false;
+  let siteTabs = [{ id: 7, url: 'https://www.wiki-masters.com/marketplace', windowId: 1 }];
+  async function pageFetchImpl(url) {
+    pageRequests.push(String(url));
+    const body = pageResponses[String(url).split('/').pop()];
+    if (!body) return { status: 404, text: async () => 'not found' };
+    return { status: 200, text: async () => JSON.stringify(body) };
+  }
+
   // Fake StreamFilter: records what is forwarded to the page.
   const filters = {};
   const browser = {
@@ -85,8 +97,18 @@ async function main() {
         remove: async (keys) => { [].concat(keys).forEach((k) => delete storage[k]); }
       }
     },
+    alarms: { create: () => {}, onAlarm: { addListener: () => {} } },
+    permissions: { contains: async () => permissionGranted },
+    scripting: {
+      executeScript: async ({ target, world, func, args }) => {
+        assert.strictEqual(target.tabId, 7);
+        assert.strictEqual(world, 'MAIN');
+        const page = vm.createContext({ fetch: pageFetchImpl, JSON, String });
+        return [{ result: await vm.runInContext(`(${func.toString()})`, page)(...args) }];
+      }
+    },
     tabs: {
-      query: async () => [{ id: 7, url: 'https://www.wiki-masters.com/marketplace', windowId: 1 }],
+      query: async () => siteTabs.slice(),
       sendMessage: async (id, msg) => { sent.push([id, msg.type]); },
       get: async (id) => { if (id !== 42) throw new Error('no tab'); return { id: 42, windowId: 3 }; },
       update: async (id, props) => { tabUpdates.push([id, clone(props)]); return { id }; },
@@ -221,10 +243,62 @@ async function main() {
   assert.strictEqual(Object.keys(storage.db.purchases).length, count);
   assert.strictEqual((await send({ type: 'restore', backup: { nope: 1 } })).ok, false);
 
-  // 10. Unknown messages are ignored.
+  // 10. Optional resolver: final prices of ended auctions of followed cards.
+  const R = ctx.__wmt;
+  const ID = (n) => `eeee0000-0000-4000-8000-00000000000${n}`;
+  const t0 = Date.now();
+  const active = (n, endAt, bid) => ({ id: ID(n), status: 'active', seller_id: 'other', card_id: 'c', card: { wikipedia_title: 'Triceratops', rarity: 'SR' },
+    snapshot_rarity: 'SR', effective_bid: bid, current_bid: bid, base_amount: 500, end_at: new Date(endAt).toISOString() });
+  await R.ingest('u', { auctions: [active(1, t0 - 10 * 60e3, 1000), active(2, t0 - 9 * 60e3, 1100), active(3, t0 - 8 * 60e3, 1200), active(4, t0 - 7 * 60e3, 1300)] }, t0 - 15 * 60e3);
+  assert.deepStrictEqual(Object.keys(storage.db.checks).sort(), ['aaaa1111-0000-4000-8000-000000000001', ID(1), ID(2), ID(3), ID(4)],
+    'the still-running auction from step 2 is queued too (not due yet)');
+
+  assert.strictEqual((await R.resolveTick(t0)).skipped, 'off', 'off by default');
+  storage.settings.market = Object.assign({}, storage.settings.market, { autoResolve: true, resolveSpacingSec: 60, resolveMaxPerDay: 3 });
+  assert.strictEqual((await R.resolveTick(t0)).skipped, 'permission', 'needs the optional permission');
+  permissionGranted = true;
+  assert.deepStrictEqual(pageRequests, [], 'nothing sent so far');
+
+  // Sold: exact price recorded, removed from the queue.
+  pageResponses[ID(1)] = { auction: Object.assign(active(1, t0 - 10 * 60e3, 1000), { status: 'settled_sold', final_price: 1500, settled_at: new Date(t0 - 10 * 60e3).toISOString() }) };
+  assert.deepStrictEqual(clone(await R.resolveTick(t0)), { id: ID(1), outcome: 'resolved' });
+  assert.deepStrictEqual(pageRequests, [`https://www.wiki-masters.com/api/marketplace/${ID(1)}`]);
+  assert.ok(!storage.db.checks[ID(1)]);
+  assert.ok(storage.db.marketSales.triceratops.some((x) => x.price === 1500));
+
+  // Fixed spacing between two requests.
+  assert.strictEqual((await R.resolveTick(t0 + 30e3)).skipped, 'spacing');
+
+  // Extended by late bids: re-timed to the new end.
+  pageResponses[ID(2)] = { auction: active(2, t0 + 3600e3, 1400) };
+  assert.strictEqual((await R.resolveTick(t0 + 61e3)).outcome, 'extended');
+  assert.strictEqual(storage.db.checks[ID(2)].end, t0 + 3600e3);
+
+  // No answer: retried later.
+  assert.strictEqual((await R.resolveTick(t0 + 122e3)).outcome, 'no-answer');
+  assert.strictEqual(storage.db.checks[ID(3)].attempts, 1);
+
+  // Daily cap (3 here).
+  assert.strictEqual((await R.resolveTick(t0 + 183e3)).skipped, 'cap');
+  assert.strictEqual(storage.resolver.count, 3);
+  storage.settings.market.resolveMaxPerDay = 100;
+
+  // Only while a game tab is open.
+  siteTabs = [];
+  assert.strictEqual((await R.resolveTick(t0 + 244e3)).skipped, 'no-tab');
+  siteTabs = [{ id: 7, url: 'https://www.wiki-masters.com/marketplace', windowId: 1 }];
+
+  // Dropped after 3 attempts without an answer.
+  storage.db.checks[ID(3)].attempts = 2;
+  storage.db.checks[ID(3)].nextAt = 0;
+  assert.strictEqual((await R.resolveTick(t0 + 305e3)).outcome, 'dropped');
+  assert.ok(!storage.db.checks[ID(3)]);
+  assert.strictEqual(pageRequests.length, 4, 'one request per tick, never more');
+
+  // 11. Unknown messages are ignored.
   assert.strictEqual(send({ type: 'sync' }), undefined, 'there is no active "sync" any more');
 
-  console.log('ok   background.js end-to-end (passive capture, balance, overlay, follow, export progress, tab reuse, gap warning, backup)');
+  console.log('ok   background.js end-to-end (passive capture, balance, overlay, follow, export progress, tab reuse, gap warning, backup, optional resolver)');
 }
 
 main().catch((e) => {

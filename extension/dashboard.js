@@ -127,13 +127,42 @@ function renderWarnings() {
 /* ---------------------------------------------------------------- market */
 
 function marketRows() {
-  const all = WMMarket.allStats(state.db, Date.now(), state.settings.market.windowDays);
+  const all = WMMarket.allStats(state.db, Date.now(), state.settings.market.windowDays, state.settings.market.useEstimates);
   const match = WMStats.makeMatcher(state.settings, state.db);
   let rows = Object.keys(all).map((k) => Object.assign({ tracked: !!match(all[k].card.replace(/ ✦$/, '')) }, all[k]));
   if (state.marketScope === 'tracked') rows = rows.filter((r) => r.tracked);
   const q = WMExtract.cardKey(state.marketSearch);
   if (q) rows = rows.filter((r) => r.key.includes(q));
   return { all, rows: rows.sort((a, b) => b.n - a.n || a.card.localeCompare(b.card, 'fr')) };
+}
+
+function salesCount(r) {
+  const extra = [r.nOwn ? `${r.nOwn} à vous` : '', r.nEst ? `${r.nEst} ≈` : ''].filter(Boolean).join(' · ');
+  return `${r.n}${extra ? ` (${extra})` : ''}`;
+}
+
+function renderChecks() {
+  const box = $('market-checks');
+  box.textContent = '';
+  const match = WMStats.makeMatcher(state.settings, state.db);
+  const pending = WMMarket.pendingChecks(state.db, Date.now(), (c) => !!match(c));
+  const auto = state.settings.market.autoResolve;
+  box.append(F.el('h3', { text: auto ? `File du relevé automatique (${pending.ended.length})` : `À vérifier (${pending.ended.length})` }));
+  box.append(F.el('p', { class: 'small muted', text: auto
+    ? `Enchères terminées de vos cartes suivies dont le prix final n'est pas encore connu. Le relevé automatique les traite une par une (toutes les ${state.settings.market.resolveSpacingSec} s, quand un onglet du jeu est ouvert). ${pending.upcoming} enchère(s) suivie(s) encore en cours.`
+    : `Enchères terminées de vos cartes suivies dont le prix final n'a pas été vu. Ouvrez-les sur le site pour l'enregistrer, ou activez le relevé automatique dans les paramètres. ${pending.upcoming} enchère(s) suivie(s) encore en cours.` }));
+  if (!pending.ended.length) {
+    box.append(F.el('p', { class: 'muted', text: 'Rien à vérifier.' }));
+    return;
+  }
+  box.append(F.table([
+    { label: 'Carte', value: (c) => c.card },
+    { label: 'Fin', value: (c) => WMTime.formatDateTime(c.end), cls: () => 'nowrap' },
+    { label: 'Dernière enchère vue', value: (c) => (c.hasBid ? F.w(c.lastPrice) : `${F.w(c.lastPrice)} (sans enchère)`), num: true },
+    { label: 'Vue le', value: (c) => WMTime.formatDateTime(c.lastSeenAt), cls: () => 'nowrap' },
+    { label: 'Essais', value: (c) => c.attempts, num: true },
+    { label: '', value: (c) => F.el('a', { href: `https://www.wiki-masters.com/marketplace/${encodeURIComponent(c.id)}`, target: '_blank', rel: 'noopener', text: 'Ouvrir ↗' }) }
+  ], pending.ended.slice(0, 200), { maxHeight: '360px' }));
 }
 
 function maxBuy(median) {
@@ -156,6 +185,7 @@ function renderMarket() {
     else detail.append(F.el('div', { class: 'notice warn', text: "Pas encore de données pour cette carte : parcourez le Marché pour en recueillir." }));
   }
 
+  renderChecks();
   const box = $('market-table');
   box.textContent = '';
   if (!rows.length) {
@@ -168,7 +198,7 @@ function renderMarket() {
   box.append(F.table([
     { label: 'Carte', value: (r) => F.el('span', null, r.card, r.rarity ? F.el('span', { class: 'tag', text: r.rarity }) : null) },
     { label: 'Médiane', value: (r) => r.median, format: F.w, num: true },
-    { label: 'Ventes', title: 'Ventes observées sur la période (dont les vôtres)', value: (r) => `${r.n}${r.nOwn ? ` (${r.nOwn})` : ''}`, num: true },
+    { label: 'Ventes', title: 'Ventes observées sur la période : total (dont les vôtres · dont estimées ≈)', value: (r) => salesCount(r), num: true },
     { label: 'P25 – P75', value: (r) => (r.p25 === null ? '–' : `${F.w(r.p25)} – ${F.w(r.p75)}`), num: true },
     { label: 'Min / Max', value: (r) => (r.min === null ? '–' : `${F.w(r.min)} / ${F.w(r.max)}`), num: true },
     { label: 'Tendance 7 j', value: (r) => trend(r.trend7), num: true, cls: (r) => F.signClass(r.trend7) },
@@ -194,7 +224,7 @@ function marketDetail(s) {
         F.el('button', { text: tracked ? 'Ne plus suivre' : '+ Suivre', onclick: () => follow(s.card, !tracked) }),
         F.el('a', { class: 'button', href: '#market', text: '✕', title: 'Fermer', 'aria-label': 'Fermer' }))),
     F.el('div', { class: 'tiles' },
-      F.tile('Médiane des ventes', F.wUnit(s.median), `${s.n} vente(s) sur ${state.settings.market.windowDays} j${s.nOwn ? `, dont ${s.nOwn} à vous` : ''}`),
+      F.tile('Médiane des ventes', F.wUnit(s.median), `${s.n} vente(s) sur ${state.settings.market.windowDays} j${s.nOwn ? `, dont ${s.nOwn} à vous` : ''}${s.nEst ? `, dont ${s.nEst} estimée(s) ≈` : ''}`),
       F.tile('Achat max conseillé', F.wUnit(maxBuy(s.median)), `Marge visée ${state.settings.valuation.targetMarginPct} %`),
       F.tile('P25 – P75', s.p25 === null ? '–' : `${F.w(s.p25)} – ${F.w(s.p75)}`, 'La moitié des ventes est dans cette fourchette'),
       F.tile('Min / Max', s.min === null ? '–' : `${F.w(s.min)} / ${F.w(s.max)}`),
@@ -213,10 +243,11 @@ function marketDetail(s) {
       xTicks: { callback: (v) => WMTime.formatDay(WMTime.dayKey(v)).slice(0, 5), maxTicksLimit: 8 },
       tooltipTitle: (items) => (items.length ? WMTime.formatDateTime(items[0].parsed.x) : ''),
       datasets: [
-        { label: 'Ventes des autres joueurs', data: s.sales.filter((x) => !x.own).map((x) => ({ x: x.t, y: x.price })), slot: 0 },
+        { label: 'Ventes des autres joueurs', data: s.sales.filter((x) => !x.own && !x.est).map((x) => ({ x: x.t, y: x.price })), slot: 0 },
+        { label: 'Estimées ≈ (dernière enchère vue)', data: s.sales.filter((x) => x.est).map((x) => ({ x: x.t, y: x.price })), slot: 3, pointStyle: 'rectRot' },
         { label: 'Vos ventes', data: s.sales.filter((x) => x.own).map((x) => ({ x: x.t, y: x.price })), slot: 1, pointStyle: 'triangle' },
         { label: 'Médiane journalière', data: daily.map((d) => ({ x: d.t, y: d.median })), slot: 2, line: true }
-      ]
+      ].filter((d, i) => i !== 1 || d.data.length) // no empty "estimated" legend entry
     });
   }, 0);
   return wrap;

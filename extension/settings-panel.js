@@ -1,4 +1,4 @@
-/* global browser, WMExtract, WMStore, WMStats, WMSettings, WMTables, WMTime, WMFormat */
+/* global browser, WMExtract, WMStore, WMMarket, WMStats, WMSettings, WMTables, WMTime, WMFormat */
 /* Settings tab of the dashboard. */
 (function () {
 'use strict';
@@ -30,6 +30,11 @@ function renderAll() {
   $('overlay').checked = settings.market.overlay;
   $('dealPct').value = settings.market.dealPct;
   $('mWindowDays').value = settings.market.windowDays;
+  $('useEstimates').checked = settings.market.useEstimates;
+  $('autoResolve').checked = settings.market.autoResolve;
+  $('resolveSpacingSec').value = settings.market.resolveSpacingSec;
+  $('resolveMaxPerDay').value = settings.market.resolveMaxPerDay;
+  renderResolverStatus();
   $('scriptUrl').value = settings.sheets.scriptUrl;
   $('secret').value = settings.sheets.secret;
   $('autoExport').checked = settings.sheets.autoExport;
@@ -144,6 +149,10 @@ function readForm() {
   settings.market.overlay = $('overlay').checked;
   settings.market.dealPct = $('dealPct').value;
   settings.market.windowDays = $('mWindowDays').value;
+  settings.market.useEstimates = $('useEstimates').checked;
+  settings.market.autoResolve = $('autoResolve').checked;
+  settings.market.resolveSpacingSec = $('resolveSpacingSec').value;
+  settings.market.resolveMaxPerDay = $('resolveMaxPerDay').value;
   settings.sheets.scriptUrl = $('scriptUrl').value.trim();
   settings.sheets.secret = $('secret').value.trim();
   settings.sheets.autoExport = $('autoExport').checked;
@@ -163,11 +172,41 @@ async function save() {
 }
 
 ['windowDays', 'sampleSize', 'haircutPct', 'commissionPct', 'targetMarginPct', 'unmatched', 'overlay', 'dealPct', 'mWindowDays',
-  'scriptUrl', 'secret', 'autoExport']
+  'useEstimates', 'resolveSpacingSec', 'resolveMaxPerDay', 'scriptUrl', 'secret', 'autoExport']
   .forEach((id) => {
     $(id).addEventListener('input', () => scheduleSave());
     $(id).addEventListener('change', () => { scheduleSave(); renderSummary(); });
   });
+
+/* ------------------------------------------------------- final prices */
+
+// The resolver needs the optional "scripting" permission, asked on this click.
+$('autoResolve').addEventListener('change', async (e) => {
+  if (e.target.checked) {
+    let granted = false;
+    try { granted = await browser.permissions.request({ permissions: ['scripting'] }); } catch (err) { granted = false; }
+    if (!granted) e.target.checked = false;
+  }
+  scheduleSave(true);
+  renderResolverStatus();
+});
+
+async function renderResolverStatus() {
+  const box = $('resolver-status');
+  if (!box) return;
+  const { resolver } = await browser.storage.local.get('resolver');
+  const s = WMSettings.normalize(settings);
+  const match = WMStats.makeMatcher(s, db);
+  const pending = WMMarket.pendingChecks(db, Date.now(), (c) => !!match(c));
+  const today = WMTime.dayKey(Date.now());
+  const r = resolver && resolver.day === today ? resolver : { count: 0, resolved: 0 };
+  const parts = [`${pending.ended.length} enchère(s) terminée(s) à vérifier, ${pending.upcoming} en cours suivie(s).`];
+  if ($('autoResolve').checked) {
+    parts.push(`Aujourd'hui : ${r.count} requête(s) sur ${s.market.resolveMaxPerDay}, ${r.resolved || 0} prix relevé(s).`);
+    if (resolver && resolver.lastAt) parts.push(`Dernière : ${WMTime.formatDateTime(resolver.lastAt)}${resolver.lastCard ? ` (${resolver.lastCard})` : ''}.`);
+  }
+  box.textContent = parts.join(' ');
+}
 
 /* ---------------------------------------------------------------- Sheets */
 
@@ -268,7 +307,9 @@ browser.storage.onChanged.addListener((changes, area) => {
     db = WMStore.normalizeDb(changes.db.newValue || WMStore.emptyDb());
     renderKnownCards();
     renderSummary();
+    renderResolverStatus();
   }
+  if (changes.resolver) renderResolverStatus();
   // Card followed from the site ("+ Suivre") while this tab is open.
   if (changes.settings && !document.activeElement.closest('#tab-settings')) {
     settings = WMSettings.normalize(changes.settings.newValue);

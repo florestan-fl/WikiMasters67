@@ -311,6 +311,43 @@ test('market: records listings and other players\' sales; own sales come from db
   assert.strictEqual(db.marketSales.terre.length, 1, 'sales are kept');
 });
 
+test('market: followed auctions are queued, estimated, then resolved', () => {
+  const db = Store.emptyDb();
+  const end = Date.UTC(2026, 10, 5, 12);
+  const tracked = (c) => c === 'Terre';
+  // Seen while browsing, 10 min before the end, with a bid.
+  Market.ingest(db, { auctions: [
+    auction('t1', 'Terre', { effective_bid: 4100, current_bid: 4100, end_at: new Date(end).toISOString() }),
+    auction('m1', 'Mars (planète)', { effective_bid: 900, current_bid: 900, end_at: new Date(end).toISOString() }),
+    auction('own', 'Terre', { seller_id: 'me', effective_bid: 5000, current_bid: 5000, end_at: new Date(end).toISOString() })
+  ] }, end - 600e3, 'me', tracked);
+  assert.deepStrictEqual(Object.keys(db.checks), ['t1'], 'only other players\' auctions of followed cards');
+  assert.strictEqual(db.checks.t1.nextAt, end + Market.GRACE);
+  // Extended by a late bid: re-timed.
+  Market.ingest(db, { auction: auction('t1', 'Terre', { effective_bid: 4200, current_bid: 4200, end_at: new Date(end + 60e3).toISOString() }) }, end - 30e3, 'me', tracked);
+  assert.strictEqual(db.checks.t1.nextAt, end + 60e3 + Market.GRACE);
+  assert.strictEqual(db.checks.t1.lastPrice, 4200);
+  // Ended, final price never seen: estimate from the last bid seen (all cards), listed "to check".
+  const later = end + 3600e3;
+  Market.prune(db, later);
+  assert.deepStrictEqual(db.marketEstimates.terre.map((x) => x.price), [4200]);
+  assert.deepStrictEqual(db.marketEstimates['mars (planete)'].map((x) => x.price), [900]);
+  assert.deepStrictEqual(Market.pendingChecks(db, later, tracked).ended.map((c) => c.id), ['t1']);
+  let st = Market.allStats(db, later, 30, true).terre;
+  assert.deepStrictEqual([st.n, st.nEst, st.median], [1, 1, 4200]);
+  assert.deepStrictEqual([Market.allStats(db, later, 30, false).terre.n, Market.allStats(db, later, 30, false).terre.median], [0, null], 'estimates can be left out');
+  // Final price seen (resolver or a page you open): exact sale replaces the estimate.
+  Market.ingest(db, { auction: auction('t1', 'Terre', { status: 'settled_sold', final_price: 4600, end_at: new Date(end + 60e3).toISOString() }) }, later, 'me', tracked);
+  assert.deepStrictEqual(Object.keys(db.checks), []);
+  assert.strictEqual(db.marketEstimates.terre, undefined);
+  st = Market.allStats(db, later, 30, true).terre;
+  assert.deepStrictEqual([st.n, st.nEst, st.median], [1, 0, 4600]);
+  // No estimate when the last view was long before the end.
+  Market.ingest(db, { auction: auction('t2', 'Terre', { effective_bid: 100, current_bid: 100, end_at: new Date(end).toISOString() }) }, end - 5 * 3600e3, 'me', tracked);
+  Market.prune(db, later);
+  assert.ok(!(db.marketEstimates.terre || []).some((x) => x.id === 't2'));
+});
+
 test('market: quantiles and trends', () => {
   assert.strictEqual(Market.quantile([1, 2, 3, 4], 0.5), 2.5);
   assert.strictEqual(Market.quantile([10, 20, 30, 40, 50], 0.25), 20);

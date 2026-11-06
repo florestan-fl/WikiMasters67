@@ -1,4 +1,4 @@
-/* global browser, WMExtract, WMStore, WMMarket, WMStats, WMTables, WMSettings */
+/* global browser, WMExtract, WMStore, WMMarket, WMStats, WMTables, WMSettings, WMTime */
 'use strict';
 
 /*
@@ -67,7 +67,9 @@ async function handleBody(url, chunks) {
 
 /** Exposed for tests: processes one API answer. */
 async function ingest(url, json, now) {
+  const settings = await getSettings();
   const result = await withDb((db) => {
+    const match = WMStats.makeMatcher(settings, db);
     const out = { added: { purchases: [], sales: [] }, auctions: 0, marketSales: 0, own: false, warning: null };
     if (json && Array.isArray(json.history) && Array.isArray(json.won)) {
       const ex = WMExtract.extract(json);
@@ -78,9 +80,10 @@ async function ingest(url, json, now) {
       out.warning = gapWarning(ex, before);
       db.meta.warning = out.warning ? { t: now, text: out.warning } : null;
     }
-    const m = WMMarket.ingest(db, json, now, db.meta.me);
+    const m = WMMarket.ingest(db, json, now, db.meta.me, (card) => !!match(card));
     out.auctions = m.auctions;
     out.marketSales = m.sales;
+    out.ids = m.ids;
     if (out.own || m.auctions) {
       db.meta.lastCapture = now;
       db.meta.lastCaptureKind = out.own ? 'own' : 'market';
@@ -136,6 +139,112 @@ async function updateBadge() {
 }
 
 /* ------------------------------------------------------------------------ */
+/* Optional: final price of ended auctions (off by default)                 */
+/* ------------------------------------------------------------------------ */
+/*
+ * When "Relever automatiquement le prix final" is on, the extension asks the
+ * game for ended auctions of your followed cards, one at a time:
+ *  - one small request (/api/marketplace/<id>, the same data the auction
+ *    page loads), sent from your open game tab so that it uses your session;
+ *  - only while a game tab is open, never more than one at a time;
+ *  - a fixed spacing (60 s by default, 30 s minimum) and a daily cap;
+ *  - still running (extended by late bids): re-timed to the new end;
+ *    no answer: retried 30 min later, dropped after 3 attempts.
+ * It does not try to look like a person (no random delays, no fake page views).
+ */
+
+const RESOLVE_ALARM = 'wmt-resolve';
+const RETRY_MS = 30 * 60000;
+const MAX_ATTEMPTS = 3;
+let resolving = false;
+
+browser.alarms.create(RESOLVE_ALARM, { periodInMinutes: 1 });
+browser.alarms.onAlarm.addListener((a) => {
+  if (a.name === RESOLVE_ALARM) resolveTick().catch((e) => setResolverState({ lastError: String((e && e.message) || e) }));
+});
+
+async function getResolverState() {
+  const { resolver } = await browser.storage.local.get('resolver');
+  const today = WMTime.dayKey(Date.now());
+  const r = Object.assign({ day: today, count: 0, lastAt: 0, resolved: 0, dropped: 0 }, resolver || {});
+  if (r.day !== today) Object.assign(r, { day: today, count: 0, resolved: 0, dropped: 0 });
+  return r;
+}
+
+async function setResolverState(patch) {
+  const r = Object.assign(await getResolverState(), patch);
+  await browser.storage.local.set({ resolver: r });
+  return r;
+}
+
+/** Runs inside the game page (your session). Must stay self-contained. */
+function pageFetch(url) {
+  return fetch(url, { credentials: 'include', headers: { Accept: 'application/json' } })
+    .then((r) => r.text().then((t) => JSON.stringify({ status: r.status, text: t })))
+    .catch((e) => JSON.stringify({ status: 0, text: String(e) }));
+}
+
+/** One step: at most one request. Returns what happened (for tests and the status line). */
+async function resolveTick(now) {
+  now = now || Date.now();
+  const settings = await getSettings();
+  if (!settings.market.autoResolve || resolving) return { skipped: 'off' };
+  if (!(await browser.permissions.contains({ permissions: ['scripting'] }))) return { skipped: 'permission' };
+  const state = await getResolverState();
+  if (now - state.lastAt < settings.market.resolveSpacingSec * 1000) return { skipped: 'spacing' };
+  if (state.count >= settings.market.resolveMaxPerDay) return { skipped: 'cap' };
+
+  const db = await loadDb();
+  const match = WMStats.makeMatcher(settings, db);
+  const due = Object.keys(db.checks || {})
+    .map((id) => Object.assign({ id }, db.checks[id]))
+    .filter((c) => c.nextAt <= now && match(c.card))
+    .sort((a, b) => a.nextAt - b.nextAt)[0];
+  if (!due) return { skipped: 'empty' };
+
+  const tabs = (await browser.tabs.query({ url: SITE_MATCH })).filter((t) => !t.discarded && !t.incognito);
+  const tab = tabs[0];
+  if (!tab) return { skipped: 'no-tab' };
+
+  resolving = true;
+  try {
+    const origin = new URL(tab.url).origin;
+    const url = `${origin}/api/marketplace/${encodeURIComponent(due.id)}`;
+    await setResolverState({ lastAt: now, count: state.count + 1 });
+    let json = null;
+    try {
+      const results = await browser.scripting.executeScript({ target: { tabId: tab.id }, world: 'MAIN', func: pageFetch, args: [url] });
+      const r = results && results[0] && results[0].result;
+      const res = typeof r === 'string' ? JSON.parse(r) : null;
+      if (res && res.status >= 200 && res.status < 300) json = JSON.parse(res.text);
+    } catch (e) {
+      json = null;
+    }
+    if (json) await ingest(url, json, now);
+
+    // Outcome.
+    let outcome = 'resolved';
+    await withDb((d) => {
+      const c = d.checks[due.id];
+      if (!c) return; // settled: removed by ingest, the sale (if any) is stored
+      if (c.end > now) { outcome = 'extended'; return; } // re-timed by ingest
+      if (c.attempts + 1 >= MAX_ATTEMPTS) { delete d.checks[due.id]; outcome = 'dropped'; return; }
+      d.checks[due.id] = Object.assign({}, c, { attempts: c.attempts + 1, nextAt: now + RETRY_MS });
+      outcome = json ? 'not-settled' : 'no-answer';
+    });
+    const after = await getResolverState();
+    await setResolverState({
+      lastCard: due.card, lastOutcome: outcome, lastError: null,
+      resolved: after.resolved + (outcome === 'resolved' ? 1 : 0),
+      dropped: after.dropped + (outcome === 'dropped' ? 1 : 0)
+    });
+    return { id: due.id, outcome };
+  } finally {
+    resolving = false;
+  }
+}
+
+/* ------------------------------------------------------------------------ */
 /* Messages                                                                 */
 /* ------------------------------------------------------------------------ */
 
@@ -178,7 +287,8 @@ async function overlayInfo(tiles) {
   if (!settings.market.overlay) return { ok: true, enabled: false, items: [] };
   const db = await loadDb();
   const match = WMStats.makeMatcher(settings, db);
-  const items = WMMarket.overlayInfo(db, tiles, (card) => !!match(card), Date.now(), settings.market.windowDays, settings.market.dealPct);
+  const items = WMMarket.overlayInfo(db, tiles, (card) => !!match(card), Date.now(), settings.market.windowDays,
+    settings.market.dealPct, settings.market.useEstimates);
   return { ok: true, enabled: true, items };
 }
 
@@ -277,7 +387,7 @@ async function resetData() {
     Object.keys(db).forEach((k) => delete db[k]);
     Object.assign(db, WMStore.emptyDb());
   });
-  await browser.storage.local.remove(['lastExport', 'exportState', 'lastResult', 'lastSync', 'syncState']);
+  await browser.storage.local.remove(['lastExport', 'exportState', 'lastResult', 'lastSync', 'syncState', 'resolver']);
   return { ok: true };
 }
 
@@ -382,4 +492,4 @@ async function importFromSheet() {
 }
 
 // For the Node tests.
-globalThis.__wmt = { ingest, onApiRequest };
+globalThis.__wmt = { ingest, onApiRequest, resolveTick };

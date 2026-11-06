@@ -22,7 +22,11 @@
     market: {
       overlay: true,       // show market prices on the site's auction tiles
       dealPct: 15,         // green / red pill when the price is this far from the median
-      windowDays: 30       // period used for the market median
+      windowDays: 30,      // period used for the market median
+      useEstimates: true,  // count "last bid seen" estimates in the median
+      autoResolve: false,  // opt-in: fetch the final price of ended auctions of followed cards
+      resolveSpacingSec: 60,
+      resolveMaxPerDay: 300
     },
     sheets: {
       scriptUrl: '',
@@ -82,6 +86,10 @@
     if (mk.overlay !== undefined) s.market.overlay = !!mk.overlay;
     s.market.dealPct = num(mk.dealPct, DEFAULTS.market.dealPct, 1, 90);
     s.market.windowDays = Math.round(num(mk.windowDays, DEFAULTS.market.windowDays, 1, 120));
+    if (mk.useEstimates !== undefined) s.market.useEstimates = !!mk.useEstimates;
+    if (mk.autoResolve !== undefined) s.market.autoResolve = !!mk.autoResolve;
+    s.market.resolveSpacingSec = Math.round(num(mk.resolveSpacingSec, DEFAULTS.market.resolveSpacingSec, 30, 3600));
+    s.market.resolveMaxPerDay = Math.round(num(mk.resolveMaxPerDay, DEFAULTS.market.resolveMaxPerDay, 1, 2000));
     return s;
   }
 

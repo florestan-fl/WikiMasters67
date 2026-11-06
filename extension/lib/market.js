@@ -4,8 +4,12 @@
  * search, auction page, your own lists).
  *
  *   db.auctions     { [auctionId]: latest observation }  (pruned 2 days after the end)
- *   db.marketSales  { [marketKey]: [{ id, t, price }] }  other players' sales you have seen
- *                                                        (an ended auction opened by you)
+ *   db.marketSales  { [marketKey]: [{ id, t, price }] }  other players' sales seen (exact final price)
+ *   db.marketEstimates { [marketKey]: [{ id, t, price }] } estimated sales: last bid seen shortly
+ *                                                        before the end of an auction whose final
+ *                                                        price was never seen (a lower bound)
+ *   db.checks       { [auctionId]: {...} }  auctions of followed cards whose final price is still
+ *                                           unknown: the "À vérifier" list / resolver queue
  * Your own sales come from db.sales. A market key is the card name, with
  * shiny copies kept apart.
  */
@@ -23,6 +27,9 @@
   var SALES_KEEP_DAYS = 120;
   var SALES_PER_CARD = 400;
   var ASK_FRESH = 3 * HOUR;
+  var GRACE = 3 * 60000;          // the game settles an auction a few seconds after its end
+  var EST_MAX_GAP = 30 * 60000;   // estimate only if the last bid was seen this close to the end
+  var CHECK_KEEP = 7 * DAY;
 
   function marketKey(title, shiny) {
     return cardKey(title) + (shiny ? ' ✦' : '');
@@ -74,12 +81,25 @@
     };
   }
 
-  /** Records the auctions of one API answer. Returns what was learned. */
-  function ingest(db, json, now, me) {
+  function removeById(map, key, id) {
+    if (!map[key]) return false;
+    var before = map[key].length;
+    map[key] = map[key].filter(function (s) { return s.id !== id; });
+    if (!map[key].length) delete map[key];
+    return map[key] ? map[key].length !== before : before > 0;
+  }
+
+  /**
+   * Records the auctions of one API answer. Returns what was learned.
+   * isTracked(card): auctions of followed cards are queued until their final price is known.
+   */
+  function ingest(db, json, now, me, isTracked) {
     db.auctions = db.auctions || {};
     db.marketSales = db.marketSales || {};
+    db.marketEstimates = db.marketEstimates || {};
+    db.checks = db.checks || {};
     db.cards = db.cards || {};
-    var res = { auctions: 0, sales: 0 };
+    var res = { auctions: 0, sales: 0, resolved: 0, ids: [] };
     findAuctions(json).map(normalize).forEach(function (x) {
       if (!x) return;
       res.auctions++;
@@ -88,8 +108,25 @@
         card: x.card, key: x.key, baseKey: x.baseKey, shiny: x.shiny, rarity: x.rarity, status: x.status,
         price: x.price, hasBid: x.hasBid, end: x.end, seenAt: now, mine: mine
       };
+      res.ids.push(x.id);
       var meta = db.cards[x.baseKey] || {};
       db.cards[x.baseKey] = { title: x.card, category: x.category || meta.category || '', rarity: x.rarity || meta.rarity || '' };
+
+      // Final price queue (followed cards, other players' auctions).
+      var check = db.checks[x.id];
+      if (x.status === 'active') {
+        if (!mine && x.end !== null && isTracked && isTracked(x.card)) {
+          db.checks[x.id] = {
+            card: x.card, key: x.key, end: x.end, lastPrice: x.price, hasBid: x.hasBid, lastSeenAt: now,
+            attempts: check ? check.attempts : 0,
+            nextAt: Math.max(x.end + GRACE, check && check.end === x.end ? check.nextAt : 0)
+          };
+        }
+      } else {
+        if (check) { delete db.checks[x.id]; res.resolved++; }
+        removeById(db.marketEstimates, x.key, x.id); // the real outcome is known
+      }
+
       // Someone else's finished sale (your own sales are already in db.sales).
       if (x.status === 'settled_sold' && x.final !== null && !mine) {
         var list = db.marketSales[x.key] = db.marketSales[x.key] || [];
@@ -104,6 +141,20 @@
   }
 
   function prune(db, now) {
+    db.marketEstimates = db.marketEstimates || {};
+    db.checks = db.checks || {};
+    // Ended auctions whose final price was never seen: last bid seen near the end -> estimate.
+    Object.keys(db.auctions).forEach(function (id) {
+      var a = db.auctions[id];
+      if (a.mine || a.status !== 'active' || !a.hasBid || a.price === null || a.end === null) return;
+      if (a.end > now - GRACE || a.end - a.seenAt > EST_MAX_GAP) return;
+      var known = (db.marketSales[a.key] || []).some(function (s) { return s.id === id; });
+      var list = db.marketEstimates[a.key] = db.marketEstimates[a.key] || [];
+      if (!known && !list.some(function (s) { return s.id === id; })) list.push({ id: id, t: a.end, price: a.price });
+    });
+    Object.keys(db.checks).forEach(function (id) {
+      if (db.checks[id].end < now - CHECK_KEEP) delete db.checks[id];
+    });
     var ids = Object.keys(db.auctions);
     ids.forEach(function (id) {
       var a = db.auctions[id];
@@ -114,12 +165,28 @@
       ids.sort(function (x, y) { return db.auctions[x].seenAt - db.auctions[y].seenAt; })
         .slice(0, ids.length - MAX_AUCTIONS).forEach(function (id) { delete db.auctions[id]; });
     }
-    Object.keys(db.marketSales).forEach(function (k) {
-      var list = db.marketSales[k].filter(function (s) { return s.t >= now - SALES_KEEP_DAYS * DAY; })
-        .sort(function (a, b) { return a.t - b.t; });
-      if (list.length > SALES_PER_CARD) list = list.slice(-SALES_PER_CARD);
-      if (list.length) db.marketSales[k] = list; else delete db.marketSales[k];
+    [db.marketSales, db.marketEstimates].forEach(function (map) {
+      Object.keys(map).forEach(function (k) {
+        var list = map[k].filter(function (s) { return s.t >= now - SALES_KEEP_DAYS * DAY; })
+          .sort(function (a, b) { return a.t - b.t; });
+        if (list.length > SALES_PER_CARD) list = list.slice(-SALES_PER_CARD);
+        if (list.length) map[k] = list; else delete map[k];
+      });
     });
+  }
+
+  /** Ended auctions of followed cards whose final price is still unknown, newest first. */
+  function pendingChecks(db, now, isTracked) {
+    var ended = [];
+    var upcoming = 0;
+    Object.keys(db.checks || {}).forEach(function (id) {
+      var c = db.checks[id];
+      if (isTracked && !isTracked(c.card)) return;
+      if (c.end > now) upcoming++;
+      else ended.push(Object.assign({ id: id }, c));
+    });
+    ended.sort(function (a, b) { return b.end - a.end; });
+    return { ended: ended, upcoming: upcoming };
   }
 
   /* --------------------------------------------------------------- stats */
@@ -136,8 +203,8 @@
     return quantile(list.slice().sort(function (a, b) { return a - b; }), 0.5);
   }
 
-  /** All observed sales by market key: yours (db.sales) + seen ones (db.marketSales). */
-  function salesByKey(db) {
+  /** All observed sales by market key: yours (db.sales) + seen ones (db.marketSales) [+ estimates]. */
+  function salesByKey(db, useEstimates) {
     var by = {};
     Object.keys(db.sales || {}).forEach(function (id) {
       var s = db.sales[id];
@@ -151,6 +218,14 @@
         if (!list.some(function (x) { return x.id === s.id; })) list.push({ id: s.id, t: s.t, price: s.price, own: false });
       });
     });
+    if (useEstimates) {
+      Object.keys(db.marketEstimates || {}).forEach(function (k) {
+        db.marketEstimates[k].forEach(function (s) {
+          var list = by[k] = by[k] || [];
+          if (!list.some(function (x) { return x.id === s.id; })) list.push({ id: s.id, t: s.t, price: s.price, own: false, est: true });
+        });
+      });
+    }
     Object.keys(by).forEach(function (k) { by[k].sort(function (a, b) { return a.t - b.t; }); });
     return by;
   }
@@ -198,6 +273,7 @@
       shiny: / ✦$/.test(key),
       n: prices.length,
       nOwn: inWindow.filter(function (s) { return s.own; }).length,
+      nEst: inWindow.filter(function (s) { return s.est; }).length,
       median: quantile(prices, 0.5),
       p25: quantile(prices, 0.25),
       p75: quantile(prices, 0.75),
@@ -216,9 +292,9 @@
    * Market stats for every card with data. windowDays: period used for the
    * median (default 30).
    */
-  function allStats(db, now, windowDays) {
+  function allStats(db, now, windowDays, useEstimates) {
     windowDays = windowDays || 30;
-    var sales = salesByKey(db);
+    var sales = salesByKey(db, useEstimates !== false);
     var asks = asksByKey(db, now);
     var meta = {};
     Object.keys(db.auctions || {}).forEach(function (id) {
@@ -230,8 +306,8 @@
       var k = marketKey(s.card, s.shiny);
       if (!meta[k]) meta[k] = { card: s.card, rarity: s.rarity };
     });
-    Object.keys(db.marketSales || {}).forEach(function (k) {
-      if (!meta[k]) meta[k] = { card: (db.cards[k] && db.cards[k].title) || k, rarity: '' };
+    Object.keys(db.marketSales || {}).concat(Object.keys(db.marketEstimates || {})).forEach(function (k) {
+      if (!meta[k]) meta[k] = { card: (db.cards[k.replace(/ ✦$/, '')] && db.cards[k.replace(/ ✦$/, '')].title) || k, rarity: '' };
     });
     var out = {};
     Object.keys(meta).forEach(function (k) {
@@ -255,9 +331,9 @@
    * tiles: [{ ref, id, text }]; id may be null: then the card is guessed from
    * the tile text (card title + price).
    */
-  function overlayInfo(db, tiles, isTracked, now, windowDays, dealPct) {
+  function overlayInfo(db, tiles, isTracked, now, windowDays, dealPct, useEstimates) {
     var stats = null;
-    function st() { if (!stats) stats = allStats(db, now, windowDays); return stats; }
+    function st() { if (!stats) stats = allStats(db, now, windowDays, useEstimates); return stats; }
     var active = null;
     function activeList() {
       if (!active) {
@@ -293,6 +369,7 @@
         tracked: isTracked(a.card),
         median: ref,
         n: s ? s.n : 0,
+        nEst: s ? s.nEst : 0,
         p25: s ? s.p25 : null,
         p75: s ? s.p75 : null,
         trend7: s ? s.trend7 : null,
@@ -304,7 +381,8 @@
 
   var api = {
     marketKey: marketKey, findAuctions: findAuctions, normalize: normalize, ingest: ingest, prune: prune,
-    allStats: allStats, dailyMedians: dailyMedians, askAt: askAt, overlayInfo: overlayInfo, quantile: quantile
+    allStats: allStats, dailyMedians: dailyMedians, askAt: askAt, overlayInfo: overlayInfo, quantile: quantile,
+    pendingChecks: pendingChecks, GRACE: GRACE
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.WMMarket = api;

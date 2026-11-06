@@ -170,9 +170,12 @@
     sales.forEach(function (s) {
       if (s.status === SOLD && !s.excluded && !s.shiny) (soldEvidence[s.key] = soldEvidence[s.key] || []).push({ t: s.time, price: s.price });
     });
-    Object.keys(db.marketSales || {}).forEach(function (k) {
-      if (/ ✦$/.test(k)) return;
-      db.marketSales[k].forEach(function (o) { (soldEvidence[k] = soldEvidence[k] || []).push({ t: o.t, price: o.price }); });
+    var evidenceMaps = [db.marketSales || {}].concat(settings.market.useEstimates ? [db.marketEstimates || {}] : []);
+    evidenceMaps.forEach(function (map) {
+      Object.keys(map).forEach(function (k) {
+        if (/ ✦$/.test(k)) return;
+        map[k].forEach(function (o) { (soldEvidence[k] = soldEvidence[k] || []).push({ t: o.t, price: o.price }); });
+      });
     });
     Object.keys(soldEvidence).forEach(function (k) { soldEvidence[k].sort(function (a, b) { return a.t - b.t; }); });
 
@@ -431,7 +434,7 @@
     });
 
     // Market prices of the tracked cards.
-    var marketAll = Market.allStats(db, now, settings.market.windowDays);
+    var marketAll = Market.allStats(db, now, settings.market.windowDays, settings.market.useEstimates);
     var market = Object.keys(marketAll).map(function (k) { return marketAll[k]; })
       .filter(function (x) { return !!match(x.card.replace(/ ✦$/, '')); })
       .sort(function (a, b) { return a.card.localeCompare(b.card, 'fr'); });

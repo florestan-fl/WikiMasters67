@@ -79,9 +79,10 @@
         </div>
         <input type="search" id="market-search" placeholder="Filtrer par carte">
       </div>
-      <p class="small muted">Médiane des ventes observées sur la période choisie dans les paramètres : vos ventes, et celles des autres joueurs quand vous ouvrez une enchère terminée.
-        « Moins chère en vente » vient des annonces vues en parcourant le Marché. Cliquez une carte pour le détail.</p>
+      <p class="small muted">Médiane des ventes observées sur la période choisie dans les paramètres : vos ventes, celles des autres joueurs dont le prix final a été vu,
+        et (si activé) les estimations « ≈ » tirées de la dernière enchère vue. « Moins chère en vente » vient des annonces vues en parcourant le Marché. Cliquez une carte pour le détail.</p>
       <div class="card"><div id="market-table"></div></div>
+      <div class="card" id="market-checks"></div>
     </section>
 
     <!-- =============================================================== cards -->
@@ -198,6 +199,20 @@
           <label>Écart signalé en vert / rouge (%)<input type="number" id="dealPct" min="1" max="90" step="1"></label>
           <label>Période de la médiane (jours)<input type="number" id="mWindowDays" min="1" max="120" step="1"></label>
         </div>
+
+        <h3 class="spaced">Prix final des enchères terminées</h3>
+        <label class="check"><input type="checkbox" id="useEstimates"> Compter les estimations « ≈ » dans la médiane</label>
+        <p class="muted small">Quand le prix final d'une enchère n'a pas été vu, la dernière enchère vue moins de 30 min avant la fin sert d'estimation (un minimum : une surenchère de dernière minute n'est pas vue).</p>
+        <label class="check"><input type="checkbox" id="autoResolve"> Relever automatiquement le prix final des enchères terminées (cartes suivies)</label>
+        <div class="notice warn small" style="white-space: normal">Quand cette option est active, l'extension envoie elle-même des requêtes au jeu : une par enchère terminée de vos cartes suivies
+          (<code>/api/marketplace/&lt;id&gt;</code>, depuis votre onglet du jeu), à intervalle fixe, seulement quand un onglet du jeu est ouvert, avec un maximum par jour.
+          Ces requêtes ne cherchent pas à passer pour une visite humaine. Le règlement du jeu interdit les scripts : vous en prenez le risque pour votre compte.
+          Désactivée, l'extension n'envoie rien et vous propose la liste « À vérifier » dans l'onglet Marché.</div>
+        <div class="grid">
+          <label>Intervalle entre deux requêtes (secondes, min. 30)<input type="number" id="resolveSpacingSec" min="30" max="3600" step="10"></label>
+          <label>Maximum par jour<input type="number" id="resolveMaxPerDay" min="1" max="2000" step="10"></label>
+        </div>
+        <div id="resolver-status" class="small secondary"></div>
       </div>
 
       <div class="card">
