@@ -203,7 +203,7 @@ function renderMarket() {
     { label: 'Min / Max', value: (r) => (r.min === null ? '–' : `${F.w(r.min)} / ${F.w(r.max)}`), num: true },
     { label: 'Tendance 7 j', value: (r) => trend(r.trend7), num: true, cls: (r) => F.signClass(r.trend7) },
     { label: 'Tendance 30 j', value: (r) => trend(r.trend30), num: true, cls: (r) => F.signClass(r.trend30) },
-    { label: 'Moins chère en vente', value: (r) => r.lowestAsk, format: F.w, num: true },
+    { label: 'Moins chère à enchérir', title: 'Parmi les annonces vues récemment : prochaine enchère minimale (enchère actuelle + 10 %), ou mise de départ', value: (r) => r.lowestAsk, format: F.w, num: true },
     { label: 'Annonces', value: (r) => r.asks, num: true },
     { label: 'Achat max conseillé', title: `Médiane ÷ (1 + marge visée de ${state.settings.valuation.targetMarginPct} %)`, value: (r) => maxBuy(r.median), format: F.w, num: true },
     { label: '', value: (r) => F.el('button', { class: 'link', text: r.tracked ? 'Ne plus suivre' : '+ Suivre',
@@ -230,11 +230,16 @@ function marketDetail(s) {
       F.tile('Min / Max', s.min === null ? '–' : `${F.w(s.min)} / ${F.w(s.max)}`),
       F.tile('Tendance 7 j', trend(s.trend7), 'Médiane 7 j vs 8–30 j', F.signClass(s.trend7)),
       F.tile('Tendance 30 j', trend(s.trend30), 'Médiane 30 j vs 31–90 j', F.signClass(s.trend30)),
-      F.tile('Moins chère en vente', F.wUnit(s.lowestAsk), `${s.asks} annonce(s) vue(s) récemment`)),
+      F.tile('Moins chère à enchérir', F.wUnit(s.lowestAsk), `Prochaine enchère min. ou mise de départ · ${s.asks} annonce(s) vue(s)`)),
     F.el('figure', { class: 'chart' },
-      F.el('figcaption', null, F.el('h3', { text: 'Prix des ventes observées et médiane journalière' }),
+      F.el('figcaption', null, F.el('h3', { text: 'Ventes observées, vos achats et médiane journalière' }),
         F.el('span', { class: 'small muted', text: `${state.settings.market.windowDays} derniers jours (W)` })),
       F.el('div', { class: 'chart-box' }, F.el('canvas', { id: 'c-market' }), F.el('div', { class: 'chart-empty muted', hidden: true, text: 'Aucune vente observée sur la période.' }))));
+
+  // Your purchases of this card (shiny copies apart, like the market key), within the period.
+  const from = Date.now() - state.settings.market.windowDays * 86400e3;
+  const buys = state.model.purchases.filter((r) => !r.excluded && r.time >= from &&
+    WMMarket.marketKey(r.card, r.shiny) === s.key).map((r) => ({ x: r.time, y: r.price }));
 
   setTimeout(() => {
     const daily = WMMarket.dailyMedians(s.sales);
@@ -246,8 +251,9 @@ function marketDetail(s) {
         { label: 'Ventes des autres joueurs', data: s.sales.filter((x) => !x.own && !x.est).map((x) => ({ x: x.t, y: x.price })), slot: 0 },
         { label: 'Estimées ≈ (dernière enchère vue)', data: s.sales.filter((x) => x.est).map((x) => ({ x: x.t, y: x.price })), slot: 3, pointStyle: 'rectRot' },
         { label: 'Vos ventes', data: s.sales.filter((x) => x.own).map((x) => ({ x: x.t, y: x.price })), slot: 1, pointStyle: 'triangle' },
+        { label: 'Vos achats', data: buys, slot: 4, pointStyle: 'rect' },
         { label: 'Médiane journalière', data: daily.map((d) => ({ x: d.t, y: d.median })), slot: 2, line: true }
-      ].filter((d, i) => i !== 1 || d.data.length) // no empty "estimated" legend entry
+      ].filter((d) => d.line || d.data.length) // no legend entry for an empty series
     });
   }, 0);
   return wrap;
@@ -446,10 +452,26 @@ function renderPrices() {
 
   const shown = state.priceCard ? cards.filter((c) => c.key === state.priceCard) : cards.slice(0, WMStats.MAX_SERIES);
   const idx = shown.map((c) => cards.indexOf(c) + 1);
+  // Each card keeps its colour; past 8 followed cards, a card whose colour is taken
+  // on this chart gets a free one (never two series with the same colour).
+  const used = new Set();
+  shown.forEach((c) => {
+    let slot = slots[c.key] % 8;
+    if (used.has(slot)) slot = [0, 1, 2, 3, 4, 5, 6, 7].find((x) => !used.has(x));
+    used.add(slot);
+    slots[c.key] = slot;
+  });
+  const dayTick = (v) => WMTime.formatDay(WMTime.dayKey(v)).slice(0, 5);
   C.render('c-inflation', {
-    type: 'line', unit: 'W', labels: m.inflation.rows.map((r) => `${r[0]}`),
-    tooltipTitle: (items) => (items.length ? `${items[0].label}e achat` : ''),
-    datasets: shown.map((c, i) => ({ label: c.card, data: m.inflation.rows.map((r) => r[idx[i]]), slot: slots[c.key] }))
+    type: 'scatter', unit: 'W', xType: 'linear',
+    xTicks: { callback: dayTick, maxTicksLimit: 8 },
+    tooltipTitle: (items) => (items.length ? WMTime.formatDay(WMTime.dayKey(items[0].parsed.x)) : ''),
+    // One line per card: average purchase price of each day (noon), days without purchase skipped.
+    datasets: shown.map((c, i) => ({
+      label: c.card,
+      data: m.inflation.rows.filter((r) => r[idx[i]] !== null).map((r) => ({ x: r[0] + 12 * 3600e3, y: Math.round(r[idx[i]]) })),
+      slot: slots[c.key], line: true, points: true
+    }))
   });
 
   // Scatter: one card at a time (purchases vs sales), to keep points readable.

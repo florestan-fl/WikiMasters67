@@ -160,9 +160,12 @@
           borderColor: color,
           backgroundColor: color,
           borderWidth: 2,
-          pointRadius: 0,
-          pointHoverRadius: 4,
+          pointRadius: d.points ? 4 : 0,
+          pointHoverRadius: d.points ? 6 : 4,
           pointHitRadius: 8,
+          pointBorderColor: t.surface,
+          pointBorderWidth: d.points ? 2 : 0,
+          pointStyle: d.pointStyle || 'circle',
         });
       }
       if (opts.type === 'scatter') {
@@ -170,8 +173,8 @@
           backgroundColor: color,
           borderColor: t.surface,
           borderWidth: 2,
-          pointRadius: d.pointStyle === 'triangle' ? 7 : 5,
-          pointHoverRadius: d.pointStyle === 'triangle' ? 9 : 7,
+          pointRadius: d.pointStyle && d.pointStyle !== 'circle' ? 7 : 5,
+          pointHoverRadius: d.pointStyle && d.pointStyle !== 'circle' ? 9 : 7,
           pointStyle: d.pointStyle || 'circle'
         });
       }

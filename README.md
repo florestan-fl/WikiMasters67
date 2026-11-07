@@ -28,7 +28,7 @@ So, to record your transactions, **open the Marché at least every 2 days**. The
 * **Your sales** (Historique).
 * **Other players' sales** whose final price was seen: an ended auction you open, or the automatic reading below.
 * **Estimates "≈"**: when an auction you saw with a bid less than 30 minutes before its end finishes without its final price being seen, that last bid is counted as an estimated sale. It is a minimum, since a last-second outbid is missed. Shown separately, and it can be left out of the median (*Paramètres → Prix du marché*).
-* **Current listings** seen while browsing the Marché ("Moins chère en vente", the cheapest listing currently for sale).
+* **Current listings** seen while browsing the Marché ("Moins chère à enchérir": the next minimum bid, or the starting price without a bid).
 
 ### Final prices of ended auctions
 
@@ -48,12 +48,15 @@ Every auction of a followed card that you see while browsing is queued. When it 
 * **Popup** (toolbar icon). It shows the status: when your transactions were last read, the latest market data, your balance, and Google Sheets (with export progress). It also lists the latest transactions recorded. Buttons: **Tableau de bord** (dashboard), **Prix du marché**, **Aller au Marché** (brings your Marché tab to the front, or opens it).
 * **Dashboard**: everything opens in **a single tab**, including the settings. The browser's Back / Forward buttons work, and the extension reuses this tab instead of opening a new one.
   * *Vue d'ensemble* (overview): realized profit per day, estimated trading profit, cumulative profit, net worth (balance + stock), stock cost vs value.
-  * *Marché*: median of observed sales, P25–P75, min / max, 7 and 30 day trends, cheapest current listing, suggested max buy price. Followed cards or all cards seen. Click a card for its chart: observed sales and the daily median.
-  * *Par carte* (per card), *Par heure* (per hour), *Prix* (prices), *Stock*, *Transactions* (with an **Exclure** box to remove one transaction from the stats).
+  * *Marché*: median of observed sales, P25–P75, min / max, 7 and 30 day trends, "Moins chère à enchérir" (the lowest next minimum bid or starting price among the listings seen), suggested max buy price. Followed cards or all cards seen. Click a card for its chart: observed sales, your purchases and the daily median.
+  * *Prix* (prices): the average purchase price per day and per card over time (inflation); your purchases and sales of one card.
+  * *Par carte* (per card), *Par heure* (per hour), *Stock*, *Transactions* (with an **Exclure** box to remove one transaction from the stats).
   * *Paramètres* (settings): followed cards, market, stock valuation, Google Sheets, backup.
 * **On the site**, under each auction's price:
   * **Médiane 4 832**: click it to open the card's detail in the dashboard. Hover for the number of sales, P25–P75 and the trend.
-  * A pill such as **−33 %**: the current price compared with the median. Green when the price is at least 15 % below, red when it is at least 15 % above (the threshold is adjustable).
+  * A pill such as **−33 %**: what it costs to take the auction now, compared with the median. Green when it is at least 15 % below, red when it is at least 15 % above (the threshold is adjustable). That cost is:
+    * with a bid, the **next minimum bid**: `ceil(current bid × 1.1)`, for example 750 → 825;
+    * with no bid, the **starting price**.
   * **+ Suivre** (follow) for a card you don't follow yet.
 
 ## The figures
@@ -69,7 +72,7 @@ Every auction of a followed card that you see while browsing is queued. When it 
 | **Max buy price** | median ÷ (1 + target margin, 30 % by default). |
 
 A transaction counts toward the stats when all of these hold:
-* its card is followed (by name, or by a keyword in its Wikipedia description);
+* its card is followed (by name, or by a keyword in its Wikipedia description), and it is not on the exclusion list. "Ne plus suivre" on a card that a keyword selects puts it on that list, which you can edit in the settings;
 * it is not earlier than the "Suivie depuis" (tracked since) date;
 * it has not been excluded.
 
@@ -115,7 +118,7 @@ The script creates the spreadsheet itself (tabs, formats and charts), so an empt
 4. **Deploy → New deployment** → ⚙ **Web app**, *Execute as*: **Me**, *Who has access*: **Anyone** → **Deploy** → copy the URL (`…/exec`).
 5. *Paramètres → Google Sheets*: paste the URL and the secret → **Tester la connexion** (test connection).
 
-The extension writes the tabs one by one: **Tableau de bord, Par jour, Inventaire, Par carte, Prix du marché, Par heure, Inflation, Prix dans le temps, Achats, Ventes**. Progress is shown in the popup and the dashboard ("Remplissage de l'onglet « Achats » (9/10, 412 lignes)…").
+The extension writes the tabs one by one: **Tableau de bord, Par jour, Inventaire, Par carte, Prix du marché, Par heure, Inflation (average purchase price per day and per card), Prix dans le temps, Achats, Ventes**. Progress is shown in the popup and the dashboard ("Remplissage de l'onglet « Achats » (9/10, 412 lignes)…").
 
 With *Mettre à jour automatiquement* on, the export starts 90 seconds after new transactions arrive. The tabs are rewritten each time, so add your own tabs next to them. A tab with the same name that the script did not create is kept and renamed `… (v1)`.
 

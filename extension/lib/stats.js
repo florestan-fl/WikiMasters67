@@ -60,8 +60,11 @@
       names[cardKey(c.name)] = { name: c.name, since: Time.parseDateInput(c.since) };
     });
     var kws = settings.tracking.categories.map(function (c) { return cardKey(c.keyword); }).filter(Boolean);
+    var excluded = {};
+    (settings.tracking.excluded || []).forEach(function (c) { excluded[cardKey(c.name)] = true; });
     return function (card) {
       var k = cardKey(card);
+      if (excluded[k]) return null;
       if (names[k]) return names[k];
       if (kws.length) {
         var meta = db.cards[k];
@@ -415,15 +418,25 @@
     var seriesCards = cards.filter(function (c) { return c.purchases + c.sold > 0; })
       .sort(function (a, b) { return (b.purchases + b.sold) - (a.purchases + a.sold); })
       .map(function (c) { return { key: c.key, card: c.card }; });
-    var maxN = 0;
-    seriesCards.forEach(function (c) { maxN = Math.max(maxN, (buyPrices[c.key] || []).length); });
-    var inflation = { cards: seriesCards, rows: [] };
-    for (var n = 1; n <= maxN; n++) {
-      inflation.rows.push([n].concat(seriesCards.map(function (c) {
-        var list = buyPrices[c.key] || [];
-        return list.length >= n ? list[n - 1] : null;
-      })));
-    }
+    // Inflation: average purchase price per card and per day, on a time axis.
+    var byDay = {};
+    var inSeries = {};
+    seriesCards.forEach(function (c) { inSeries[c.key] = true; });
+    tp.forEach(function (r) {
+      if (!inSeries[r.key]) return;
+      var d = byDay[Time.dayKey(r.time)] = byDay[Time.dayKey(r.time)] || {};
+      (d[r.key] = d[r.key] || []).push(r.price);
+    });
+    var inflation = {
+      cards: seriesCards,
+      // [day start (ms), average price of card 1 that day | null, card 2…]
+      rows: Object.keys(byDay).sort().map(function (day) {
+        return [Time.dayStart(day)].concat(seriesCards.map(function (c) {
+          var list = byDay[day][c.key];
+          return list ? mean(list) : null;
+        }));
+      })
+    };
     var priceSeries = {};
     seriesCards.forEach(function (c) {
       priceSeries[c.key] = {

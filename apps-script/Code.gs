@@ -205,6 +205,7 @@ function insertChart(sh, spec, nRows, nCols, i) {
   if (spec.stacked) b.setOption('isStacked', true);
   if (spec.type === 'SCATTER') b.setOption('pointSize', 6);
   if (spec.type === 'LINE') b.setOption('pointSize', 5).setOption('lineWidth', 2);
+  if (spec.interpolate) b.setOption('interpolateNulls', true); // days without a purchase of that card
   sh.insertChart(b.build());
 }
 

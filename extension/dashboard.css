@@ -134,3 +134,9 @@ tr.clickable:hover td, tr.selected td { background: var(--surface-2); }
   #tab-settings .list-head { display: none; }
   #tab-settings .row { grid-template-columns: 1fr 32px; }
 }
+
+#tab-settings .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+#tab-settings .chip {
+  display: inline-flex; align-items: center; gap: 2px;
+  border: 1px solid var(--border-strong); border-radius: 999px; padding: 1px 4px 1px 10px; font-size: 12px;
+}

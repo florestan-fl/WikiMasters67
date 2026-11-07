@@ -110,7 +110,7 @@
     return {
       name: 'Prix du marché',
       headers: ['Carte', 'Rareté', 'Médiane des ventes (W)', 'Ventes observées', 'Dont les vôtres', 'P25 (W)', 'P75 (W)', 'Min (W)',
-        'Max (W)', 'Tendance 7 j', 'Tendance 30 j', 'Moins chère en vente (W)', 'Annonces actives', 'Achat max conseillé (W)'],
+        'Max (W)', 'Tendance 7 j', 'Tendance 30 j', 'Moins chère à enchérir (W)', 'Annonces actives', 'Achat max conseillé (W)'],
       rows: m.market.map(function (x) {
         return [x.card, x.rarity, r0(x.median), x.n, x.nOwn, r0(x.p25), r0(x.p75), r0(x.min), r0(x.max), r3(x.trend7), r3(x.trend30),
           r0(x.lowestAsk), x.asks, x.median === null ? null : r0(x.median * (1 - fee) / (1 + target))];
@@ -140,11 +140,11 @@
     var cards = m.inflation.cards;
     return {
       name: 'Inflation',
-      headers: ['N° achat'].concat(cards.map(function (c) { return c.card; })),
-      rows: m.inflation.rows,
-      formats: ['int'].concat(cards.map(function () { return 'int'; })),
+      headers: ['Jour'].concat(cards.map(function (c) { return c.card + ' : prix d\'achat moyen (W)'; })),
+      rows: m.inflation.rows.map(function (r) { return [r[0]].concat(r.slice(1).map(r0)); }),
+      formats: ['date'].concat(cards.map(function () { return 'int'; })),
       charts: cards.length ? [{
-        type: 'LINE', title: 'Prix d\'achat successifs par carte (W)', domain: 0,
+        type: 'LINE', title: 'Prix d\'achat moyen par jour et par carte (W)', domain: 0, interpolate: true,
         series: cards.slice(0, Stats.MAX_SERIES).map(function (c, i) { return i + 1; }), legend: 'right'
       }] : []
     };
@@ -167,7 +167,7 @@
       rows: rows,
       formats: ['datetime'].concat(cards.map(function () { return 'int'; })),
       charts: cards.length ? [{
-        type: 'SCATTER', title: 'Prix d\'achat dans le temps (W)', domain: 0,
+        type: 'SCATTER', title: 'Chaque achat dans le temps (W)', domain: 0,
         series: cards.map(function (c, i) { return i + 1; }), legend: 'right'
       }] : []
     };

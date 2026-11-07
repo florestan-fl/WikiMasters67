@@ -292,15 +292,25 @@ async function overlayInfo(tiles) {
   return { ok: true, enabled: true, items };
 }
 
+/**
+ * Follow / unfollow one card. Unfollowing a card that a category keyword still
+ * matches puts it on the exclusion list, which wins over keywords.
+ */
 async function follow(card, on) {
   const settings = await getSettings();
+  const db = await loadDb();
   const key = WMExtract.cardKey(card);
-  const exists = settings.tracking.cards.some((c) => WMExtract.cardKey(c.name) === key);
-  if (on && !exists) settings.tracking.cards.push({ name: String(card), since: '' });
-  if (!on) settings.tracking.cards = settings.tracking.cards.filter((c) => WMExtract.cardKey(c.name) !== key);
+  const sameCard = (c) => WMExtract.cardKey(c.name) === key;
+  settings.tracking.excluded = settings.tracking.excluded.filter((c) => !sameCard(c));
+  if (on) {
+    if (!WMStats.makeMatcher(settings, db)(card)) settings.tracking.cards.push({ name: String(card), since: '' });
+  } else {
+    settings.tracking.cards = settings.tracking.cards.filter((c) => !sameCard(c));
+    if (WMStats.makeMatcher(settings, db)(card)) settings.tracking.excluded.push({ name: String(card) });
+  }
   await browser.storage.local.set({ settings });
   notifySiteTabs({ type: 'marketUpdated' });
-  return { ok: true };
+  return { ok: true, followed: !!WMStats.makeMatcher(settings, db)(card) };
 }
 
 async function clearBadge() {

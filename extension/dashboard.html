@@ -80,7 +80,7 @@
         <input type="search" id="market-search" placeholder="Filtrer par carte">
       </div>
       <p class="small muted">Médiane des ventes observées sur la période choisie dans les paramètres : vos ventes, celles des autres joueurs dont le prix final a été vu,
-        et (si activé) les estimations « ≈ » tirées de la dernière enchère vue. « Moins chère en vente » vient des annonces vues en parcourant le Marché. Cliquez une carte pour le détail.</p>
+        et (si activé) les estimations « ≈ » tirées de la dernière enchère vue. « Moins chère à enchérir » : parmi les annonces vues en parcourant le Marché, la prochaine enchère minimale (enchère actuelle + 10 %, arrondie au-dessus) ou la mise de départ. Cliquez une carte pour le détail.</p>
       <div class="card"><div id="market-table"></div></div>
       <div class="card" id="market-checks"></div>
     </section>
@@ -131,7 +131,7 @@
       </div>
       <div class="charts">
         <figure class="card chart">
-          <figcaption><h3>Prix d'achat successifs</h3><span class="small muted">Prix du 1er, 2e, 3e… achat de chaque carte (W)</span></figcaption>
+          <figcaption><h3>Prix d'achat dans le temps</h3><span class="small muted">Prix d'achat moyen de chaque jour, par carte (W)</span></figcaption>
           <div class="chart-box"><canvas id="c-inflation"></canvas><div class="chart-empty muted" hidden>Aucun achat suivi.</div></div>
         </figure>
         <figure class="card chart">
@@ -187,6 +187,12 @@
           Ces descriptions sont souvent larges : vérifiez le résultat ci-dessous.</p>
         <div id="categories" class="rows"></div>
         <button id="add-category">+ Ajouter un mot-clé</button>
+
+        <div id="excluded-block" hidden>
+          <h3 class="spaced">Cartes exclues</h3>
+          <p class="secondary small">Cartes retirées avec « Ne plus suivre » alors qu'un mot-clé les sélectionne encore : elles ne sont pas suivies.</p>
+          <div id="excluded" class="chips"></div>
+        </div>
 
         <div id="match-summary" class="notice ok small"></div>
       </div>

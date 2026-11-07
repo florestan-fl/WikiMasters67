@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "WikiMasters Trading",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "description": "Suivez vos achats et ventes sur le marché WikiMasters et les prix du marché : profit par jour, stock, statistiques, export Google Sheets. Lecture passive des pages du jeu ; relevé automatique des prix finaux en option.",
   "browser_specific_settings": {
     "gecko": {

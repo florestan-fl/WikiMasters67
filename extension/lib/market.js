@@ -35,6 +35,19 @@
     return cardKey(title) + (shiny ? ' ✦' : '');
   }
 
+  /**
+   * What it costs to take the auction now: with a bid, the next minimum bid
+   * (current bid + 10 %, rounded up); without a bid, the starting price.
+   * Integer arithmetic: 750 * 1.1 is 825.0000000000001 in floating point.
+   */
+  function nextPrice(a) {
+    if (!a) return null;
+    var bid = a.bid !== undefined ? a.bid : (a.hasBid ? a.price : null);
+    if (bid !== null && bid !== undefined && isFinite(bid)) return Math.ceil((Math.round(bid) * 11) / 10);
+    var base = a.base !== undefined && a.base !== null ? a.base : a.price;
+    return base === null || base === undefined ? null : base;
+  }
+
   function looksLikeAuction(o) {
     return !!o && typeof o === 'object' && !Array.isArray(o) && typeof o.id === 'string' &&
       typeof o.status === 'string' && 'end_at' in o && ('card' in o || 'card_id' in o);
@@ -60,9 +73,11 @@
     var title = Extract.cardName(a);
     if (!title) return null;
     var num = Extract.num;
-    var price = num(a.effective_bid);
-    if (price === null) price = num(a.current_bid);
-    if (price === null) price = num(a.base_amount);
+    var bid = num(a.current_bid);
+    var base = num(a.base_amount);
+    if (base === null) base = num(a.listing_base_amount);
+    var price = num(a.effective_bid); // what the site displays
+    if (price === null) price = bid !== null ? bid : base;
     return {
       id: a.id,
       card: title,
@@ -73,7 +88,9 @@
       category: (a.card && a.card.category) || '',
       status: a.status,
       price: price,
-      hasBid: num(a.current_bid) !== null,
+      bid: bid,
+      base: base,
+      hasBid: bid !== null,
       final: num(a.final_price),
       end: Extract.toMs(a.end_at),
       settledAt: Extract.toMs(a.settled_at),
@@ -106,7 +123,7 @@
       var mine = !!me && x.seller === me;
       db.auctions[x.id] = {
         card: x.card, key: x.key, baseKey: x.baseKey, shiny: x.shiny, rarity: x.rarity, status: x.status,
-        price: x.price, hasBid: x.hasBid, end: x.end, seenAt: now, mine: mine
+        price: x.price, bid: x.bid, base: x.base, hasBid: x.hasBid, end: x.end, seenAt: now, mine: mine
       };
       res.ids.push(x.id);
       var meta = db.cards[x.baseKey] || {};
@@ -150,7 +167,8 @@
       if (a.end > now - GRACE || a.end - a.seenAt > EST_MAX_GAP) return;
       var known = (db.marketSales[a.key] || []).some(function (s) { return s.id === id; });
       var list = db.marketEstimates[a.key] = db.marketEstimates[a.key] || [];
-      if (!known && !list.some(function (s) { return s.id === id; })) list.push({ id: id, t: a.end, price: a.price });
+      var lastBid = a.bid !== undefined && a.bid !== null ? a.bid : a.price;
+      if (!known && !list.some(function (s) { return s.id === id; })) list.push({ id: id, t: a.end, price: lastBid });
     });
     Object.keys(db.checks).forEach(function (id) {
       if (db.checks[id].end < now - CHECK_KEEP) delete db.checks[id];
@@ -238,7 +256,7 @@
       if (a.mine || a.status !== 'active' || a.price === null) return;
       if (a.end !== null && a.end <= now) return;
       if (a.seenAt < now - ASK_FRESH) return;
-      (by[a.key] = by[a.key] || []).push({ id: id, price: a.price, hasBid: a.hasBid, end: a.end });
+      (by[a.key] = by[a.key] || []).push({ id: id, price: nextPrice(a), hasBid: a.hasBid, end: a.end });
     });
     return by;
   }
@@ -250,7 +268,8 @@
       var a = db.auctions[id];
       if (a.mine || a.shiny || a.baseKey !== baseKey || a.price === null) return;
       if (a.seenAt > at || a.seenAt < at - 2 * DAY) return;
-      if (best === null || a.price < best) best = a.price;
+      var p = nextPrice(a);
+      if (best === null || p < best) best = p;
     });
     return best;
   }
@@ -357,7 +376,8 @@
       used[a.id] = true;
       var s = st()[a.key];
       var ref = s && s.n ? s.median : null;
-      var diff = ref && a.price !== null ? a.price / ref - 1 : null;
+      var next = nextPrice(a);
+      var diff = ref && next !== null ? next / ref - 1 : null;
       return {
         ref: t.ref,
         found: true,
@@ -365,6 +385,7 @@
         card: a.card,
         key: a.key,
         price: a.price,
+        next: next,
         hasBid: a.hasBid,
         tracked: isTracked(a.card),
         median: ref,
@@ -382,7 +403,7 @@
   var api = {
     marketKey: marketKey, findAuctions: findAuctions, normalize: normalize, ingest: ingest, prune: prune,
     allStats: allStats, dailyMedians: dailyMedians, askAt: askAt, overlayInfo: overlayInfo, quantile: quantile,
-    pendingChecks: pendingChecks, GRACE: GRACE
+    pendingChecks: pendingChecks, nextPrice: nextPrice, GRACE: GRACE
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.WMMarket = api;

@@ -24,6 +24,7 @@ function renderAll() {
   renderKnownCards();
   renderCards();
   renderCategories();
+  renderExcluded();
   const v = settings.valuation;
   ['windowDays', 'sampleSize', 'haircutPct', 'commissionPct', 'targetMarginPct'].forEach((k) => { $(k).value = v[k]; });
   $('unmatched').value = v.unmatched;
@@ -106,6 +107,19 @@ function renderCategories() {
       onclick: () => { settings.tracking.categories.splice(i, 1); scheduleSave(true); renderCategories(); renderSummary(); }
     });
     box.append(F.el('div', { class: 'row kw' }, kw, remove));
+  });
+}
+
+function renderExcluded() {
+  const box = $('excluded');
+  box.textContent = '';
+  $('excluded-block').hidden = !settings.tracking.excluded.length;
+  settings.tracking.excluded.forEach((c, i) => {
+    box.append(F.el('span', { class: 'chip' }, c.name,
+      F.el('button', {
+        class: 'link', text: '✕', title: `Suivre à nouveau « ${c.name} »`, 'aria-label': `Suivre à nouveau ${c.name}`,
+        onclick: () => { settings.tracking.excluded.splice(i, 1); scheduleSave(true); renderExcluded(); renderSummary(); }
+      })));
   });
 }
 

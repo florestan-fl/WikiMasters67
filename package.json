@@ -1,6 +1,6 @@
 {
   "name": "wikimasters-trading",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "private": true,
   "description": "Firefox extension + Apps Script that sync WikiMasters marketplace transactions to Google Sheets",
   "scripts": {

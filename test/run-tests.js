@@ -270,11 +270,14 @@ test('stats on your real data: v1 import + site data', () => {
 /* ---------------------------------------------------------------- market */
 
 function auction(id, title, extra) {
-  return Object.assign({
+  const a = Object.assign({
     id, status: 'active', card_id: `c-${title}`, card: { wikipedia_title: title, rarity: 'UR', category: 'planète' },
     snapshot_rarity: 'UR', base_amount: 100, current_bid: null, effective_bid: 100, final_price: null,
     end_at: '2026-11-05T20:00:00+00:00', settled_at: null, seller_id: 'other', is_shiny: false
   }, extra || {});
+  // Like the site: without a bid, the displayed price (effective_bid) is the starting price.
+  if (!extra || extra.base_amount === undefined) a.base_amount = a.current_bid !== null ? Math.min(100, a.current_bid) : a.effective_bid;
+  return a;
 }
 
 test('market: finds auctions anywhere in an answer, ignores the rest', () => {
@@ -382,6 +385,47 @@ test('market: overlay info by auction id or by tile text', () => {
   assert.deepStrictEqual(items.map((i) => i.found), [true, true, false]);
   assert.deepStrictEqual([items[0].median, Math.round(items[0].diff * 100), items[0].deal, items[0].tracked], [5000, -30, 'good', true]);
   assert.deepStrictEqual([items[1].card, items[1].median, items[1].deal, items[1].tracked], ['Neptune (planète)', null, 'none', false]);
+  assert.strictEqual(items[1].next, 3025, 'with a bid: next minimum bid = ceil(2750 * 1.1)');
+});
+
+test('market: the gap uses the next minimum bid, or the starting price', () => {
+  assert.deepStrictEqual([750, 7, 1000, 1].map((b) => Market.nextPrice({ bid: b })), [825, 8, 1100, 2], 'exact, no floating-point 826');
+  assert.strictEqual(Market.nextPrice({ bid: null, base: 4500, price: 4500 }), 4500);
+  const db = Store.emptyDb();
+  const now = Date.UTC(2026, 10, 5, 12);
+  Market.ingest(db, { auctions: [
+    auction('b1', 'Terre', { current_bid: 750, effective_bid: 750, base_amount: 500, end_at: '2026-11-05T12:10:00+00:00' }),
+    auction('b2', 'Terre', { effective_bid: 900, base_amount: 900 }),
+    auction('s1', 'Terre', { status: 'settled_sold', final_price: 1000, end_at: '2026-11-04T10:00:00+00:00' })
+  ] }, now, 'me');
+  const [withBid, noBid] = Market.overlayInfo(db, [{ ref: 0, id: 'b1' }, { ref: 1, id: 'b2' }], () => true, now, 30, 15);
+  assert.deepStrictEqual([withBid.price, withBid.next, Math.round(withBid.diff * 1000) / 10, withBid.deal], [750, 825, -17.5, 'good']);
+  assert.deepStrictEqual([noBid.price, noBid.next, Math.round(noBid.diff * 1000) / 10, noBid.deal], [900, 900, -10, 'neutral']);
+  // Cheapest to take now: min(825, 900).
+  assert.strictEqual(Market.allStats(db, now, 30).terre.lowestAsk, 825);
+  // The estimate of an unseen final price stays the last bid itself (a minimum).
+  Market.prune(db, Date.UTC(2026, 10, 5, 21));
+  assert.deepStrictEqual(db.marketEstimates.terre.map((x) => x.price), [750]);
+});
+
+test('stats: "Ne plus suivre" beats a category keyword', () => {
+  const db = Store.emptyDb();
+  db.cards.terre = { title: 'Terre', category: 'planète du Système solaire' };
+  db.cards['mars (planete)'] = { title: 'Mars (planète)', category: 'planète du Système solaire' };
+  const s = Settings.normalize({ tracking: { cards: [], categories: [{ keyword: 'planète' }], excluded: [{ name: 'Mars (planète)' }, { name: 'mars (planète)' }] } });
+  assert.strictEqual(s.tracking.excluded.length, 1, 'deduplicated');
+  const match = Stats.makeMatcher(s, db);
+  assert.ok(match('Terre'));
+  assert.strictEqual(match('Mars (planete)'), null);
+});
+
+test('stats: inflation is the average purchase price per day, on a time axis', () => {
+  const { db, now } = scenario();
+  const m = Stats.compute(db, settingsWith(['Triceratops']), now);
+  assert.deepStrictEqual(m.inflation.cards.map((c) => c.card), ['Triceratops']);
+  assert.deepStrictEqual(m.inflation.rows, [[Time.dayStart('2026-11-01'), 150]], 'two purchases the same day: 100 and 200');
+  const t = Tables.build(m).find((x) => x.name === 'Inflation');
+  assert.deepStrictEqual([t.headers[0], t.formats[0], t.charts[0].interpolate], ['Jour', 'date', true]);
 });
 
 /* ---------------------------------------------------------------- tables */

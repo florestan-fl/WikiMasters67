@@ -9,7 +9,8 @@
     version: 2,
     tracking: {
       cards: [],        // [{ name: 'Triceratops', since: '' | 'YYYY-MM-DD' }]
-      categories: []    // [{ keyword: 'dinosaure' }]
+      categories: [],   // [{ keyword: 'dinosaure' }]
+      excluded: []      // [{ name }] never followed, even if a keyword matches ("Ne plus suivre")
     },
     valuation: {
       windowDays: 14,      // sales younger than this are "recent"
@@ -72,6 +73,13 @@
     (Array.isArray(tr.categories) ? tr.categories : []).forEach(function (c) {
       var kw = String((c && c.keyword) || '').trim();
       if (kw) s.tracking.categories.push({ keyword: kw });
+    });
+    var seenEx = {};
+    (Array.isArray(tr.excluded) ? tr.excluded : []).forEach(function (c) {
+      var name = String((c && c.name) || '').trim();
+      if (!name || seenEx[name.toLowerCase()]) return;
+      seenEx[name.toLowerCase()] = true;
+      s.tracking.excluded.push({ name: name });
     });
 
     var v = raw.valuation || {};

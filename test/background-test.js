@@ -187,7 +187,7 @@ async function main() {
   // 4. Overlay data for the site's tiles.
   const ov = await send({ type: 'overlayInfo', tiles: [{ ref: 0, id: 'aaaa1111-0000-4000-8000-000000000001' }] });
   assert.strictEqual(ov.enabled, true);
-  assert.deepStrictEqual([ov.items[0].card, ov.items[0].tracked, ov.items[0].price], ['Triceratops', true, 950]);
+  assert.deepStrictEqual([ov.items[0].card, ov.items[0].tracked, ov.items[0].price, ov.items[0].next], ['Triceratops', true, 950, 1045]);
   assert.ok(ov.items[0].median > 0, 'median from your own Triceratops sales');
 
   // 5. "+ Suivre" from the site.
@@ -195,6 +195,15 @@ async function main() {
   assert.ok(storage.settings.tracking.cards.some((c) => c.name === 'Neptune (planète)'));
   await send({ type: 'follow', card: 'neptune (planete)', follow: false });
   assert.ok(!storage.settings.tracking.cards.some((c) => c.name === 'Neptune (planète)'));
+  // Unfollowing a card that a category keyword selects: excluded, and it really stops being followed.
+  storage.db.cards.terre = { title: 'Terre', category: 'planète du Système solaire' };
+  storage.settings.tracking.categories = [{ keyword: 'planète' }];
+  assert.strictEqual((await send({ type: 'follow', card: 'Terre', follow: false })).followed, false);
+  assert.deepStrictEqual(clone(storage.settings.tracking.excluded), [{ name: 'Terre' }]);
+  assert.strictEqual((await send({ type: 'follow', card: 'Terre' })).followed, true, 'following again lifts the exclusion');
+  assert.deepStrictEqual(clone(storage.settings.tracking.excluded), []);
+  assert.ok(!storage.settings.tracking.cards.some((c) => c.name === 'Terre'), 'no duplicate name: the keyword already covers it');
+  storage.settings.tracking.categories = [];
 
   // 6. Export with per-tab progress.
   const exp = await send({ type: 'export' });

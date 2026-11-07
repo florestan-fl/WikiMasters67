@@ -112,7 +112,9 @@
         var pill = document.createElement('span');
         pill.className = 'wmt-pill wmt-' + info.deal;
         pill.textContent = pct(info.diff);
-        pill.title = (info.hasBid ? 'Enchère actuelle' : 'Mise de départ') + ' par rapport à la médiane';
+        pill.title = (info.hasBid
+          ? 'Prochaine enchère minimale ' + NF.format(info.next) + ' (enchère actuelle + 10 %)'
+          : 'Mise de départ ' + NF.format(info.next)) + ' par rapport à la médiane';
         b.appendChild(pill);
       }
     } else if (info.tracked) {
@@ -138,7 +140,7 @@
   }
 
   function signature(info) {
-    return [info.id, info.price, Math.round(info.median || 0), info.n, info.tracked ? 1 : 0].join('|');
+    return [info.id, info.price, info.next, Math.round(info.median || 0), info.n, info.tracked ? 1 : 0].join('|');
   }
 
   function insertionPoint(label, tile) {
