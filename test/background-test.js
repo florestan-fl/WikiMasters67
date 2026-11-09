@@ -60,6 +60,7 @@ async function main() {
   const pageRequests = [];
   const pageResponses = {};
   let permissionGranted = false;
+  const notifications = [];
   let siteTabs = [{ id: 7, url: 'https://www.wiki-masters.com/marketplace', windowId: 1 }];
   async function pageFetchImpl(url) {
     pageRequests.push(String(url));
@@ -99,6 +100,11 @@ async function main() {
     },
     alarms: { create: () => {}, onAlarm: { addListener: () => {} } },
     permissions: { contains: async () => permissionGranted },
+    notifications: {
+      create: async (id, opts) => { notifications.push([id, clone(opts)]); return id; },
+      clear: async () => true,
+      onClicked: { addListener: () => {} }
+    },
     scripting: {
       executeScript: async ({ target, world, func, args }) => {
         assert.strictEqual(target.tabId, 7);
@@ -304,7 +310,27 @@ async function main() {
   assert.ok(!storage.db.checks[ID(3)]);
   assert.strictEqual(pageRequests.length, 4, 'one request per tick, never more');
 
-  // 11. Unknown messages are ignored.
+  // 11. Deal notifications (passive): off by default, once per auction.
+  const D = (n) => `dddd0000-0000-4000-8000-00000000000${n}`;
+  const t1 = Date.now();
+  storage.db.marketSales.triceratops = [1, 2, 3].map((i) => ({ id: `ms${i}`, t: t1 - i * 3600e3, price: 1000 }));
+  const deal = { id: D(1), status: 'active', seller_id: 'other', card_id: 'c', card: { wikipedia_title: 'Triceratops', rarity: 'SR' },
+    snapshot_rarity: 'SR', effective_bid: 500, current_bid: 500, base_amount: 100, end_at: new Date(t1 + 10 * 60e3).toISOString() };
+  await R.ingest('u', { auctions: [deal] }, t1);
+  assert.strictEqual(notifications.length, 0, 'notifications are off by default');
+  storage.settings.features = Object.assign({}, storage.settings.features, { notify: true, alertPct: 25, alertMinSales: 3 });
+  permissionGranted = true;
+  await R.ingest('u', { auctions: [deal] }, t1 + 1000);
+  assert.strictEqual(notifications.length, 1);
+  assert.strictEqual(notifications[0][0], `wmt-deal:${D(1)}`);
+  assert.match(notifications[0][1].title, /^Bonne affaire : Triceratops \(SR\) -\d+ %$/);
+  assert.match(notifications[0][1].message, /^Prochaine mise 550 W · médiane [\d\u00a0\u202f ]+ W \(\d+ ventes\) · fin dans (9|10) min \d\d s$/,
+    'next minimum bid = ceil(500 * 1.1)');
+  await R.ingest('u', { auctions: [deal] }, t1 + 2000);
+  assert.strictEqual(notifications.length, 1, 'the same auction is notified once');
+  assert.deepStrictEqual(pageRequests.length, 4, 'deal detection sends nothing to the game');
+
+  // 12. Unknown messages are ignored.
   assert.strictEqual(send({ type: 'sync' }), undefined, 'there is no active "sync" any more');
 
   console.log('ok   background.js end-to-end (passive capture, balance, overlay, follow, export progress, tab reuse, gap warning, backup, optional resolver)');

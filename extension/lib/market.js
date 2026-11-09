@@ -94,7 +94,8 @@
       final: num(a.final_price),
       end: Extract.toMs(a.end_at),
       settledAt: Extract.toMs(a.settled_at),
-      seller: a.seller_id || (a.seller && a.seller.id) || null
+      seller: a.seller_id || (a.seller && a.seller.id) || null,
+      bidder: a.current_bidder_id || (a.current_bidder && a.current_bidder.id) || null
     };
   }
 
@@ -123,7 +124,8 @@
       var mine = !!me && x.seller === me;
       db.auctions[x.id] = {
         card: x.card, key: x.key, baseKey: x.baseKey, shiny: x.shiny, rarity: x.rarity, status: x.status,
-        price: x.price, bid: x.bid, base: x.base, hasBid: x.hasBid, end: x.end, seenAt: now, mine: mine
+        price: x.price, bid: x.bid, base: x.base, hasBid: x.hasBid, end: x.end, seenAt: now, mine: mine,
+        myBid: !!me && x.bidder === me
       };
       res.ids.push(x.id);
       var meta = db.cards[x.baseKey] || {};
@@ -346,6 +348,35 @@
   }
 
   /**
+   * Running auctions whose price to take them now (next minimum bid, or the
+   * starting price) is at least `pct` % under the card's median.
+   * opts: { pct, minSales, isEligible(card), windowDays, useEstimates, maxAgeMs }
+   * Your own auctions and those where you are already the top bidder are left out.
+   */
+  function deals(db, now, opts) {
+    var stats = allStats(db, now, opts.windowDays, opts.useEstimates);
+    var maxAge = opts.maxAgeMs || 2 * HOUR;
+    var out = [];
+    Object.keys(db.auctions || {}).forEach(function (id) {
+      var a = db.auctions[id];
+      if (a.mine || a.myBid || a.status !== 'active' || a.end === null || a.end <= now) return;
+      if (now - a.seenAt > maxAge) return;
+      if (opts.isEligible && !opts.isEligible(a.card)) return;
+      var s = stats[a.key];
+      if (!s || s.n < opts.minSales || !s.median) return;
+      var next = nextPrice(a);
+      if (next === null) return;
+      var diff = next / s.median - 1;
+      if (diff > -opts.pct / 100) return;
+      out.push({
+        id: id, card: a.card, key: a.key, rarity: a.rarity, next: next, hasBid: a.hasBid,
+        median: s.median, n: s.n, diff: diff, end: a.end, seenAt: a.seenAt
+      });
+    });
+    return out.sort(function (x, y) { return x.end - y.end; });
+  }
+
+  /**
    * Badge data for auctions shown on the site.
    * tiles: [{ ref, id, text }]; id may be null: then the card is guessed from
    * the tile text (card title + price).
@@ -403,7 +434,7 @@
   var api = {
     marketKey: marketKey, findAuctions: findAuctions, normalize: normalize, ingest: ingest, prune: prune,
     allStats: allStats, dailyMedians: dailyMedians, askAt: askAt, overlayInfo: overlayInfo, quantile: quantile,
-    pendingChecks: pendingChecks, nextPrice: nextPrice, GRACE: GRACE
+    pendingChecks: pendingChecks, nextPrice: nextPrice, deals: deals, GRACE: GRACE
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.WMMarket = api;

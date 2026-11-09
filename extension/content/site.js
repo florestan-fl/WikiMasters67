@@ -40,6 +40,43 @@
     browser.runtime.sendMessage({ type: 'balance', value: v }).catch(function () {});
   }
 
+  /* ---------------------------------------------------------- full art */
+  // One attribute on <html> lists the rarities drawn full art (content/fullart.css
+  // does the rest: no per-card work). React 19 wipes every attribute of <html>
+  // when it (re)acquires it, so an observer of that one attribute puts it back.
+  var FULL_ART = 'data-wmt-fullart';
+  var fullArt = '';
+  var fullArtGuard = null;
+
+  function applyFullArt(value) {
+    fullArt = value || '';
+    var root = document.documentElement;
+    if (fullArt) {
+      if (root.getAttribute(FULL_ART) !== fullArt) root.setAttribute(FULL_ART, fullArt);
+      if (!fullArtGuard) {
+        fullArtGuard = new MutationObserver(function () {
+          if (fullArt && root.getAttribute(FULL_ART) !== fullArt) root.setAttribute(FULL_ART, fullArt);
+        });
+        fullArtGuard.observe(root, { attributes: true, attributeFilter: [FULL_ART] });
+      }
+    } else {
+      if (fullArtGuard) fullArtGuard.disconnect();
+      fullArtGuard = null;
+      root.removeAttribute(FULL_ART);
+    }
+  }
+
+  function fullArtValue(settings) {
+    var f = settings && settings.features;
+    if (!f || !f.fullArt || !Array.isArray(f.fullArtRarities)) return '';
+    return f.fullArtRarities.map(function (r) { return String(r).toLowerCase(); }).join(' ');
+  }
+
+  browser.storage.local.get('settings').then(function (d) { applyFullArt(fullArtValue(d.settings)); }).catch(function () {});
+  browser.storage.onChanged.addListener(function (changes, area) {
+    if (area === 'local' && changes.settings) applyFullArt(fullArtValue(changes.settings.newValue));
+  });
+
   /* ----------------------------------------------------------- overlay */
 
   function isOurs(node) {

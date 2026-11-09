@@ -116,7 +116,7 @@ async function render() {
     ));
   } else if (pending.ended.length) {
     status.append(item('', `${pending.ended.length} enchère(s) terminée(s) à vérifier`,
-      'Prix final pas encore vu : liste dans l\'onglet Marché, ou activez le relevé automatique dans les paramètres.'));
+      'Prix final pas encore vu : liste dans l\'onglet Marché, ou activez le relevé automatique dans Fonctionnalités.'));
   }
 
   // 3. Balance.
@@ -149,6 +149,9 @@ async function render() {
     notices.append(F.el('div', { class: 'notice warn', text: "Aucune carte suivie : choisissez vos cartes dans les paramètres, ou cliquez « + Suivre » sous une enchère sur le site." }));
   }
 
+  // Deals in progress (passive: auctions seen while browsing).
+  renderDeals(db, settings);
+
   // Recent additions.
   const recent = (meta.recent || []).slice(-6).reverse();
   const box = $('recent');
@@ -162,6 +165,46 @@ async function render() {
         { label: 'Prix', value: (r) => r.price, format: F.w, num: true }
       ], recent, { maxHeight: '170px' }));
   }
+}
+
+let dealTimer = null;
+
+function countdown(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  if (s >= 3600) return `${Math.floor(s / 3600)}h ${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}`;
+  return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
+}
+
+function renderDeals(db, settings) {
+  const box = $('deals');
+  box.textContent = '';
+  clearInterval(dealTimer);
+  if (!settings.features.deals) return;
+  const match = WMStats.makeMatcher(settings, db);
+  const list = WMMarket.deals(db, Date.now(), {
+    pct: settings.features.alertPct, minSales: settings.features.alertMinSales, windowDays: settings.market.windowDays,
+    useEstimates: settings.market.useEstimates, isEligible: settings.features.alertScope === 'all' ? null : (c) => !!match(c)
+  });
+  box.append(F.el('div', { class: 'head' }, F.el('span', { text: 'Bonnes affaires en cours' }), F.el('span', { text: String(list.length) })));
+  if (!list.length) {
+    box.append(F.el('div', { class: 'small muted', text: `Aucune enchère vue récemment à ${settings.features.alertPct} % ou plus sous la médiane. Parcourez le Marché pour en trouver.` }));
+    return;
+  }
+  const timers = [];
+  box.append(F.el('ul', null, list.slice(0, 30).map((d) => {
+    const left = F.el('span', { class: 'left', text: countdown(d.end - Date.now()) });
+    timers.push([left, d.end]);
+    return F.el('li', null, F.el('a', {
+      href: `https://www.wiki-masters.com/marketplace/${encodeURIComponent(d.id)}`, target: '_blank', rel: 'noopener',
+      title: 'Ouvrir l\'enchère'
+    },
+    F.el('span', null,
+      F.el('div', { class: 'card-name', text: `${d.card}${d.rarity ? ` · ${d.rarity}` : ''}` }),
+      F.el('div', { class: 'sub', text: `${d.hasBid ? 'Prochaine mise' : 'Mise de départ'} ${F.w(d.next)} · méd. ${F.w(d.median)} · vu ${ago(d.seenAt)}` })),
+    F.el('span', { class: 'pill', text: `${Math.round(d.diff * 100)} %` }),
+    left));
+  })));
+  dealTimer = setInterval(() => timers.forEach(([el, end]) => { el.textContent = countdown(end - Date.now()); }), 1000);
 }
 
 init();

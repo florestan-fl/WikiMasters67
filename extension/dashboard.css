@@ -110,8 +110,8 @@ tr.clickable:hover td, tr.selected td { background: var(--surface-2); }
 .progress > div { height: 100%; background: var(--accent); transition: width .3s; }
 
 /* Settings tab */
-#tab-settings { max-width: 820px; }
-#tab-settings h2 { margin-top: 0; }
+#tab-settings, #tab-features { max-width: 820px; }
+#tab-settings h2, #tab-features h2 { margin-top: 0; }
 #tab-settings h3.spaced { margin-top: 18px; }
 #tab-settings label { display: block; font-weight: 600; margin: 10px 0 0; }
 #tab-settings label input, #tab-settings label select { display: block; width: 100%; margin-top: 4px; font-weight: 400; }
@@ -140,3 +140,15 @@ tr.clickable:hover td, tr.selected td { background: var(--surface-2); }
   display: inline-flex; align-items: center; gap: 2px;
   border: 1px solid var(--border-strong); border-radius: 999px; padding: 1px 4px 1px 10px; font-size: 12px;
 }
+
+/* Features tab (same form styles as the settings) */
+#tab-features label { display: block; font-weight: 600; margin: 10px 0 0; }
+#tab-features label input, #tab-features label select { display: block; width: 100%; margin-top: 4px; font-weight: 400; }
+#tab-features label.check { display: flex; gap: 8px; align-items: flex-start; font-weight: 400; margin-top: 12px; }
+#tab-features label.check.spaced { margin-top: 18px; }
+#tab-features label.check input { width: auto; margin: 3px 0 0; }
+#tab-features .indent { margin-left: 26px; }
+#tab-features .rarities { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 4px; }
+#tab-features .rarities label.check { margin-top: 0; align-items: center; }
+#tab-features .rarities label.check input { margin: 0; }
+#tab-features label input[type=number], #tab-features label select { max-width: 340px; }

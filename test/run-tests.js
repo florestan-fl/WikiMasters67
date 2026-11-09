@@ -408,6 +408,36 @@ test('market: the gap uses the next minimum bid, or the starting price', () => {
   assert.deepStrictEqual(db.marketEstimates.terre.map((x) => x.price), [750]);
 });
 
+test('market: deals use the price to take the auction now, and skip what is not a real opportunity', () => {
+  const db = Store.emptyDb();
+  const now = Date.UTC(2026, 10, 9, 12);
+  const soon = new Date(now + 5 * 60e3).toISOString();
+  const sold = (id, price) => auction(id, 'Terre', { status: 'settled_sold', final_price: price, end_at: '2026-11-08T10:00:00+00:00' });
+  Market.ingest(db, { auctions: [
+    sold('s1', 1000), sold('s2', 1000), sold('s3', 1000),
+    auction('d1', 'Terre', { current_bid: 600, effective_bid: 600, end_at: soon }),                          // next 660: -34 %
+    auction('d2', 'Terre', { current_bid: 700, effective_bid: 700, end_at: new Date(now + 60e3).toISOString() }), // next 770: -23 %
+    auction('n1', 'Terre', { current_bid: 760, effective_bid: 760, end_at: soon }),                          // next 836: -16 %, not enough
+    auction('m1', 'Terre', { seller_id: 'me', effective_bid: 100, end_at: soon }),                           // mine
+    auction('b1', 'Terre', { current_bid: 100, effective_bid: 100, current_bidder_id: 'me', end_at: soon }),  // already my bid
+    auction('e1', 'Terre', { effective_bid: 100, end_at: new Date(now - 60e3).toISOString() }),              // ended
+    auction('x1', 'Mars (planète)', { effective_bid: 1, end_at: soon })                                      // no median
+  ] }, now - 60e3, 'me');
+  const opts = { pct: 20, minSales: 3, windowDays: 30, useEstimates: true };
+  let list = Market.deals(db, now, opts);
+  assert.deepStrictEqual(list.map((d) => [d.id, d.next, Math.round(d.diff * 100)]), [['d2', 770, -23], ['d1', 660, -34]], 'soonest first');
+  assert.deepStrictEqual(Market.deals(db, now, Object.assign({}, opts, { minSales: 4 })), [], 'median on too few sales');
+  assert.deepStrictEqual(Market.deals(db, now, Object.assign({}, opts, { isEligible: (c) => c !== 'Terre' })), [], 'not followed');
+  assert.deepStrictEqual(Market.deals(db, now + 3 * 3600e3, opts), [], 'seen too long ago (and ended)');
+});
+
+test('settings: features are normalised', () => {
+  const d = Settings.normalize({});
+  assert.deepStrictEqual([d.features.fullArt, d.features.fullArtRarities, d.features.deals, d.features.notify], [false, ['L', 'UR'], true, false]);
+  const s = Settings.normalize({ features: { fullArt: true, fullArtRarities: ['SR', 'XX', 'L'], alertPct: 500, alertScope: 'weird' } });
+  assert.deepStrictEqual([s.features.fullArtRarities, s.features.alertPct, s.features.alertScope], [['L', 'SR'], 95, 'tracked']);
+});
+
 test('stats: "Ne plus suivre" beats a category keyword', () => {
   const db = Store.emptyDb();
   db.cards.terre = { title: 'Terre', category: 'planète du Système solaire' };

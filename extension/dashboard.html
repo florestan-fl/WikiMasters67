@@ -27,7 +27,8 @@
     <a role="tab" href="#prices" data-tab="prices">Prix</a>
     <a role="tab" href="#stock" data-tab="stock">Stock</a>
     <a role="tab" href="#tx" data-tab="tx">Transactions</a>
-    <a role="tab" href="#settings" data-tab="settings" class="tab-right">Paramètres</a>
+    <a role="tab" href="#features" data-tab="features" class="tab-right">Fonctionnalités</a>
+    <a role="tab" href="#settings" data-tab="settings">Paramètres</a>
   </nav>
 
   <main>
@@ -167,6 +168,60 @@
       <div class="card"><div id="tx-table"></div></div>
     </section>
 
+    <!-- ============================================================ features -->
+    <section data-panel="features" id="tab-features" hidden>
+      <div class="settings-head">
+        <span class="small muted">Activez ou désactivez chaque fonctionnalité. Les modifications sont enregistrées automatiquement.</span>
+      </div>
+
+      <div class="card feature">
+        <h2>Sur le site du jeu</h2>
+        <p class="muted small">Ces options modifient l'affichage des pages du jeu dans votre navigateur. C'est visible par la page : décochez pour ne rien modifier.</p>
+        <label class="check"><input type="checkbox" id="overlay"> <span><b>Médiane sous les prix</b> : la médiane des ventes et l'écart avec le prix à payer, sous « Mise actuelle » / « Mise de départ »</span></label>
+        <div class="grid indent">
+          <label>Écart signalé en vert / rouge (%)<input type="number" id="dealPct" min="1" max="90" step="1"></label>
+        </div>
+        <label class="check spaced"><input type="checkbox" id="fullArt"> <span><b>Illustration pleine carte</b> : l'image couvre toute la carte, le texte reste lisible en bas</span></label>
+        <div class="indent">
+          <div class="small secondary">Raretés concernées :</div>
+          <div id="fullArtRarities" class="rarities"></div>
+        </div>
+      </div>
+
+      <div class="card feature">
+        <h2>Bonnes affaires</h2>
+        <p class="muted small">Une enchère est une bonne affaire quand le prix à payer pour la prendre (prochaine enchère minimale = enchère actuelle + 10 %, ou mise de départ) est nettement sous la médiane de la carte.
+          Détectée uniquement avec les données reçues en parcourant le Marché : rien n'est demandé au jeu.</p>
+        <label class="check"><input type="checkbox" id="deals"> <span><b>Liste dans le popup</b> : les bonnes affaires en cours, avec le temps restant</span></label>
+        <label class="check"><input type="checkbox" id="notify"> <span><b>Notifications</b> : une notification par nouvelle bonne affaire (Firefox demande l'autorisation)</span></label>
+        <div class="grid indent">
+          <label>Sous la médiane d'au moins (%)<input type="number" id="alertPct" min="1" max="95" step="1"></label>
+          <label>Ventes minimum pour la médiane<input type="number" id="alertMinSales" min="1" max="100" step="1"></label>
+          <label>Cartes concernées
+            <select id="alertScope">
+              <option value="tracked">Mes cartes suivies</option>
+              <option value="all">Toutes les cartes avec des prix connus</option>
+            </select>
+          </label>
+        </div>
+        <div id="deals-status" class="small secondary"></div>
+      </div>
+
+      <div class="card feature">
+        <h2>Relevé automatique des prix finaux</h2>
+        <label class="check"><input type="checkbox" id="autoResolve"> <span><b>Relever automatiquement</b> le prix final des enchères terminées de vos cartes suivies</span></label>
+        <div class="notice warn small" style="white-space: normal">Quand cette option est active, l'extension envoie elle-même des requêtes au jeu : une par enchère terminée de vos cartes suivies
+          (<code>/api/marketplace/&lt;id&gt;</code>, depuis votre onglet du jeu), à intervalle fixe, seulement quand un onglet du jeu est ouvert, avec un maximum par jour.
+          Ces requêtes ne cherchent pas à passer pour une visite humaine. Le règlement du jeu interdit les scripts : vous en prenez le risque pour votre compte.
+          Désactivée, l'extension n'envoie rien et vous propose la liste « À vérifier » dans l'onglet Marché.</div>
+        <div class="grid">
+          <label>Intervalle entre deux requêtes (secondes, min. 30)<input type="number" id="resolveSpacingSec" min="30" max="3600" step="10"></label>
+          <label>Maximum par jour<input type="number" id="resolveMaxPerDay" min="1" max="2000" step="10"></label>
+        </div>
+        <div id="resolver-status" class="small secondary"></div>
+      </div>
+    </section>
+
     <!-- ============================================================ settings -->
     <section data-panel="settings" id="tab-settings" hidden>
       <div class="settings-head">
@@ -199,26 +254,12 @@
 
       <div class="card">
         <h2>Prix du marché</h2>
-        <label class="check"><input type="checkbox" id="overlay"> Afficher la médiane et l'écart sous le prix des enchères, sur le site</label>
-        <p class="muted small">Ajoute un petit bloc sous « Mise actuelle » / « Mise de départ ». C'est la seule modification visible par la page du jeu : décochez pour ne rien afficher.</p>
         <div class="grid">
-          <label>Écart signalé en vert / rouge (%)<input type="number" id="dealPct" min="1" max="90" step="1"></label>
           <label>Période de la médiane (jours)<input type="number" id="mWindowDays" min="1" max="120" step="1"></label>
         </div>
-
-        <h3 class="spaced">Prix final des enchères terminées</h3>
         <label class="check"><input type="checkbox" id="useEstimates"> Compter les estimations « ≈ » dans la médiane</label>
         <p class="muted small">Quand le prix final d'une enchère n'a pas été vu, la dernière enchère vue moins de 30 min avant la fin sert d'estimation (un minimum : une surenchère de dernière minute n'est pas vue).</p>
-        <label class="check"><input type="checkbox" id="autoResolve"> Relever automatiquement le prix final des enchères terminées (cartes suivies)</label>
-        <div class="notice warn small" style="white-space: normal">Quand cette option est active, l'extension envoie elle-même des requêtes au jeu : une par enchère terminée de vos cartes suivies
-          (<code>/api/marketplace/&lt;id&gt;</code>, depuis votre onglet du jeu), à intervalle fixe, seulement quand un onglet du jeu est ouvert, avec un maximum par jour.
-          Ces requêtes ne cherchent pas à passer pour une visite humaine. Le règlement du jeu interdit les scripts : vous en prenez le risque pour votre compte.
-          Désactivée, l'extension n'envoie rien et vous propose la liste « À vérifier » dans l'onglet Marché.</div>
-        <div class="grid">
-          <label>Intervalle entre deux requêtes (secondes, min. 30)<input type="number" id="resolveSpacingSec" min="30" max="3600" step="10"></label>
-          <label>Maximum par jour<input type="number" id="resolveMaxPerDay" min="1" max="2000" step="10"></label>
-        </div>
-        <div id="resolver-status" class="small secondary"></div>
+        <p class="muted small">Affichage sur le site, bonnes affaires et relevé automatique : onglet <a href="#features">Fonctionnalités</a>.</p>
       </div>
 
       <div class="card">

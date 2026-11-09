@@ -4,6 +4,7 @@ A Firefox extension for [WikiMasters](https://www.wiki-masters.com/) players who
 
 * **Your trades:** every purchase and sale is recorded. You get the profit per day (realized and estimated), the value of your stock, and your best cards and hours.
 * **Market prices:** the median sale price, price range and trend for the cards you follow. Directly under the auctions on the site, the extension shows how the current price compares with the median.
+* **Deals:** auctions you see that cost well below the median are listed in the popup, with an optional Firefox notification.
 * **Google Sheets (optional):** the extension fills in a spreadsheet, with charts, that you can read from anywhere.
 
 Every player picks their own cards in the settings. Nothing in the code or the spreadsheet is specific to one player.
@@ -16,7 +17,9 @@ By default the extension **never** makes a request to wiki-masters.com: no API c
 |---|---|---|
 | Your purchases (*Gagnées*), sales (*Historique*), active listings, auctions shown on the Marché | When **your** Marché page loads `/api/marketplace…`, Firefox gives the extension a copy of the response while passing it **unchanged** to the page (`webRequest.filterResponseData`) | No |
 | Your wikibidous balance | Read from the page header by the content script (read only) | No |
-| Market badge under the prices (optional) | Small elements **added** under "Mise actuelle / Mise de départ". The game's text is never modified | **Yes**: it's the only change on the page. Turn it off in *Paramètres → Prix du marché* |
+| Market badge under the prices (optional) | Small elements **added** under "Mise actuelle / Mise de départ". The game's text is never modified | **Yes**: a change on the page. Turn it off in *Fonctionnalités* |
+| Full art (optional, **off** by default) | A stylesheet that stretches the illustration over the whole card, for the rarities you choose. No element is added or moved | **Yes**: the page looks different |
+| Deals list and notifications | Computed from the auctions already received while you browse | No |
 | Final prices of ended auctions (optional, **off** by default) | One request per auction of a followed card, at a fixed interval (see below) | **Yes**: these are requests sent by the extension |
 
 So, to record your transactions, **open the Marché at least every 2 days**. The site only lists your last 50 purchases and 50 sales, and the extension warns you if some may have been missed.
@@ -35,29 +38,40 @@ So, to record your transactions, **open the Marché at least every 2 days**. The
 Every auction of a followed card that you see while browsing is queued. When it ends:
 
 * **Automatic reading off (default):** the extension sends nothing. The auction appears in the **À vérifier** list of the Marché tab (end time, last bid seen, an "Ouvrir ↗" link). Opening it is enough to record the final price.
-* **Automatic reading on** (*Paramètres → Prix du marché*, Firefox asks for the "scripting" permission). The extension asks the game itself for each ended auction:
+* **Automatic reading on** (*Fonctionnalités*, Firefox asks for the "scripting" permission). The extension asks the game itself for each ended auction:
   * one request per auction (`/api/marketplace/<id>`, the same data the auction page loads), sent from your open game tab with your session, never more than one at a time;
   * only while a game tab is open, with a **fixed** interval (60 s by default, 30 s minimum) and a daily cap (300 by default);
   * an auction extended by late bids is re-timed to its new end;
   * with no answer, it is retried 30 minutes later and dropped after 3 attempts.
 
-  These requests do **not** try to look like a person: no random delays, no fake page views. If the game looks at timing, it can tell it is automated. The rules forbid scripts, so turning this on is your own risk for your account. Its status shows in the popup and the settings.
+  These requests do **not** try to look like a person: no random delays, no fake page views. If the game looks at timing, it can tell it is automated. The rules forbid scripts, so turning this on is your own risk for your account. Its status shows in the popup and in *Fonctionnalités*.
+
+## Deals
+
+An auction is a deal when what it costs to take it now (the next minimum bid, or the starting price with no bid) is at least **25 %** below the card's median. Only auctions seen while browsing the Marché in the last 2 hours count, and only if the median rests on at least 3 sales. Your own auctions and those where you are the highest bidder are left out. All three settings are in *Fonctionnalités*, along with the cards concerned: your followed cards (default) or every card with known prices.
+
+* **List in the popup** (on by default): card, rarity, price to pay, median, the gap and a live countdown. Click a line to open the auction.
+* **Notifications** (off by default, Firefox asks for the "notifications" permission): one notification per new deal, at most once per auction. Click it to open the auction.
+
+Since the extension sends nothing to the game, a deal is only spotted when the Marché page you are browsing receives it.
 
 ## The screens
 
-* **Popup** (toolbar icon). It shows the status: when your transactions were last read, the latest market data, your balance, and Google Sheets (with export progress). It also lists the latest transactions recorded. Buttons: **Tableau de bord** (dashboard), **Prix du marché**, **Aller au Marché** (brings your Marché tab to the front, or opens it).
+* **Popup** (toolbar icon). It shows the status: when your transactions were last read, the latest market data, your balance, and Google Sheets (with export progress). It also lists the deals in progress and the latest transactions recorded. Buttons: **Tableau de bord** (dashboard), **Prix du marché**, **Aller au Marché** (brings your Marché tab to the front, or opens it).
 * **Dashboard**: everything opens in **a single tab**, including the settings. The browser's Back / Forward buttons work, and the extension reuses this tab instead of opening a new one.
   * *Vue d'ensemble* (overview): realized profit per day, estimated trading profit, cumulative profit, net worth (balance + stock), stock cost vs value.
   * *Marché*: median of observed sales, P25–P75, min / max, 7 and 30 day trends, "Moins chère à enchérir" (the lowest next minimum bid or starting price among the listings seen), suggested max buy price. Followed cards or all cards seen. Click a card for its chart: observed sales, your purchases and the daily median.
   * *Prix* (prices): the average purchase price per day and per card over time (inflation); your purchases and sales of one card.
   * *Par carte* (per card), *Par heure* (per hour), *Stock*, *Transactions* (with an **Exclure** box to remove one transaction from the stats).
-  * *Paramètres* (settings): followed cards, market, stock valuation, Google Sheets, backup.
+  * *Fonctionnalités* (features): every option that changes something on the site or sends something, each with its own switch: the median under the prices, full art, deals (list and notifications), automatic reading of final prices.
+  * *Paramètres* (settings): followed cards and excluded cards, market period, stock valuation, Google Sheets, backup.
 * **On the site**, under each auction's price:
   * **Médiane 4 832**: click it to open the card's detail in the dashboard. Hover for the number of sales, P25–P75 and the trend.
   * A pill such as **−33 %**: what it costs to take the auction now, compared with the median. Green when it is at least 15 % below, red when it is at least 15 % above (the threshold is adjustable). That cost is:
     * with a bid, the **next minimum bid**: `ceil(current bid × 1.1)`, for example 750 → 825;
     * with no bid, the **starting price**.
   * **+ Suivre** (follow) for a card you don't follow yet.
+* **Full art** (*Fonctionnalités*, off by default): the card illustration covers the whole card, with a dark gradient under the text so that it stays readable. Choose the rarities (L and UR by default). The game re-renders the page often, so the extension puts the setting back each time.
 
 ## The figures
 
@@ -101,6 +115,7 @@ For a public listing with automatic updates, choose **On this site** instead (re
 * *script.google.com*: only for the optional Google Sheets export.
 * "Read and modify network requests" (`webRequest`): needed to copy the Marché responses. The extension only reads `/api/marketplace…` and forwards them unchanged.
 * *scripting* (optional, requested only when you turn on the automatic reading of final prices): to send those requests from your game tab.
+* *notifications* (optional, requested only when you turn on deal notifications).
 
 ### First run
 
@@ -136,24 +151,25 @@ When `Code.gs` changes: **Deploy → Manage deployments → ✏️ → Version: 
 
 ```bash
 node test/run-tests.js        # extraction, database, market, statistics, tables, Apps Script (fake runtime, real data)
-node test/background-test.js  # end-to-end: passive capture (no request to the game allowed), optional resolver (spacing, cap, retries)
+node test/background-test.js  # end-to-end: passive capture (no request to the game allowed), optional resolver (spacing, cap, retries), deal notifications
 npx web-ext lint --source-dir extension
 ```
 
-`test/mock/market.html` is a marketplace page that mimics the site's layout, for testing the badges in a browser.
+`test/mock/market.html` is a marketplace page that mimics the site's layout, for testing the badges in a browser. `test/mock/cards.html` does the same for full art.
 
 ```
 extension/
   manifest.json
-  background.js        passive capture (filterResponseData), optional final-price resolver, database, export, tab reuse
-  content/site.js      balance read, market badges under the prices (optional)
+  background.js        passive capture (filterResponseData), optional final-price resolver, deal notifications, database, export, tab reuse
+  content/site.js      balance read, market badges under the prices (optional), full-art switch
+  content/fullart.css  full art, per rarity (active only when <html data-wmt-fullart> lists the rarity)
   lib/extract.js       your lists (won / history / selling) → records
-  lib/market.js        auctions seen → market prices (median, P25–P75, trend, cheapest listing), estimates, "À vérifier" queue
+  lib/market.js        auctions seen → market prices (median, P25–P75, trend, cheapest listing), estimates, "À vérifier" queue, deals
   lib/store.js         local database (insert-only, v1 import, exclusions, backups)
   lib/stats.js         FIFO, stock valuation, per day / card / hour statistics
   lib/tables.js        tables for Google Sheets and CSV
   lib/time.js, lib/settings.js, lib/format.js, lib/charts.js
-  popup.*              status and shortcuts
+  popup.*              status, deals in progress, shortcuts
   dashboard.*          dashboard (all tabs, including the settings), settings-panel.js
   vendor/chart.umd.js  Chart.js 4.4.7 (MIT)
 apps-script/Code.gs    web app that writes the tables and charts into the spreadsheet

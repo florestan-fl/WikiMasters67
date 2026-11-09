@@ -1,0 +1,64 @@
+/*
+ * Full art (WikiMasters Trading). Active only for the rarities listed in the
+ * data-wmt-fullart attribute of <html> (set by content/site.js).
+ *
+ * Card layout on the site: card element with a glow-<rarity> class; the
+ * illustration block is its direct child sized h-[45%]; the text follows.
+ * The page layout is left as it is (every block keeps its place): only the
+ * image is stretched behind the whole card, and the text block gets a dark
+ * gradient so that it stays readable.
+ */
+
+html[data-wmt-fullart~="l"] .glow-l,
+html[data-wmt-fullart~="ur"] .glow-ur,
+html[data-wmt-fullart~="sr"] .glow-sr,
+html[data-wmt-fullart~="r"] .glow-r,
+html[data-wmt-fullart~="pc"] .glow-pc,
+html[data-wmt-fullart~="c"] .glow-c {
+  position: relative !important;
+  isolation: isolate !important; /* the image below can sit under the text, inside the card */
+}
+
+html[data-wmt-fullart~="l"] .glow-l > [class*="h-[45%]"],
+html[data-wmt-fullart~="ur"] .glow-ur > [class*="h-[45%]"],
+html[data-wmt-fullart~="sr"] .glow-sr > [class*="h-[45%]"],
+html[data-wmt-fullart~="r"] .glow-r > [class*="h-[45%]"],
+html[data-wmt-fullart~="pc"] .glow-pc > [class*="h-[45%]"],
+html[data-wmt-fullart~="c"] .glow-c > [class*="h-[45%]"] {
+  position: static !important; /* keeps its place in the layout; its image is positioned on the card */
+}
+
+html[data-wmt-fullart~="l"] .glow-l > [class*="h-[45%]"] img,
+html[data-wmt-fullart~="ur"] .glow-ur > [class*="h-[45%]"] img,
+html[data-wmt-fullart~="sr"] .glow-sr > [class*="h-[45%]"] img,
+html[data-wmt-fullart~="r"] .glow-r > [class*="h-[45%]"] img,
+html[data-wmt-fullart~="pc"] .glow-pc > [class*="h-[45%]"] img,
+html[data-wmt-fullart~="c"] .glow-c > [class*="h-[45%]"] img {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: none !important;
+  max-height: none !important;
+  object-fit: cover !important;
+  z-index: -1 !important;
+}
+
+html[data-wmt-fullart~="l"] .glow-l > [class*="h-[45%]"] + *,
+html[data-wmt-fullart~="ur"] .glow-ur > [class*="h-[45%]"] + *,
+html[data-wmt-fullart~="sr"] .glow-sr > [class*="h-[45%]"] + *,
+html[data-wmt-fullart~="r"] .glow-r > [class*="h-[45%]"] + *,
+html[data-wmt-fullart~="pc"] .glow-pc > [class*="h-[45%]"] + *,
+html[data-wmt-fullart~="c"] .glow-c > [class*="h-[45%]"] + * {
+  background: linear-gradient(to top, rgba(8, 8, 8, 0.92) 0%, rgba(8, 8, 8, 0.75) 50%, rgba(8, 8, 8, 0) 100%) !important;
+}
+
+html[data-wmt-fullart~="l"] .glow-l > [class*="h-[45%]"] + * *,
+html[data-wmt-fullart~="ur"] .glow-ur > [class*="h-[45%]"] + * *,
+html[data-wmt-fullart~="sr"] .glow-sr > [class*="h-[45%]"] + * *,
+html[data-wmt-fullart~="r"] .glow-r > [class*="h-[45%]"] + * *,
+html[data-wmt-fullart~="pc"] .glow-pc > [class*="h-[45%]"] + * *,
+html[data-wmt-fullart~="c"] .glow-c > [class*="h-[45%]"] + * * {
+  color: #f4f3ef !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.75);
+}

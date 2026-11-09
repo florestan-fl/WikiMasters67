@@ -95,6 +95,7 @@ async function ingest(url, json, now) {
   });
   if (result.added.purchases.length || result.added.sales.length) scheduleAutoExport();
   if (result.auctions) notifySiteTabs({ type: 'marketUpdated' });
+  if (result.ids && result.ids.length) await notifyDeals(result.ids, now).catch(() => {});
   updateBadge();
   return result;
 }
@@ -136,6 +137,78 @@ async function updateBadge() {
     browser.action.setBadgeBackgroundColor({ color: '#1e7a34' });
     browser.action.setBadgeText({ text: n ? String(n) : '' });
   } catch (e) { /* cosmetic */ }
+}
+
+/* ------------------------------------------------------------------------ */
+/* Deals: passive detection, optional notifications                         */
+/* ------------------------------------------------------------------------ */
+
+/** Options of the deal detection, from the settings. */
+function dealOptions(settings, db) {
+  const match = WMStats.makeMatcher(settings, db);
+  return {
+    pct: settings.features.alertPct,
+    minSales: settings.features.alertMinSales,
+    windowDays: settings.market.windowDays,
+    useEstimates: settings.market.useEstimates,
+    isEligible: settings.features.alertScope === 'all' ? null : (card) => !!match(card)
+  };
+}
+
+let notificationClicks = false;
+function listenToNotificationClicks() {
+  if (notificationClicks || !browser.notifications || !browser.notifications.onClicked) return;
+  notificationClicks = true;
+  browser.notifications.onClicked.addListener(async (nid) => {
+    const m = /^wmt-deal:(.+)$/.exec(nid);
+    if (!m) return;
+    browser.notifications.clear(nid).catch(() => {});
+    await browser.tabs.create({ url: `${MARKET_PAGE}/${encodeURIComponent(m[1])}`, active: true });
+  });
+}
+listenToNotificationClicks();
+
+function timeLeft(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 3600) return `${Math.floor(s / 60)} min ${String(s % 60).padStart(2, '0')} s`;
+  return `${Math.floor(s / 3600)} h ${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}`;
+}
+
+/**
+ * Called after each capture with the auctions it contained: notifies the new
+ * deals among them, once per auction. Nothing is requested from the game.
+ */
+async function notifyDeals(ids, now) {
+  const settings = await getSettings();
+  if (!settings.features.notify) return [];
+  if (!(await browser.permissions.contains({ permissions: ['notifications'] }))) return [];
+  listenToNotificationClicks();
+  const fresh = await withDb((db) => {
+    db.meta.notified = db.meta.notified || {};
+    Object.keys(db.meta.notified).forEach((id) => { if (db.meta.notified[id] < now) delete db.meta.notified[id]; });
+    const seen = new Set(ids);
+    const list = WMMarket.deals(db, now, dealOptions(settings, db)).filter((d) => seen.has(d.id) && !db.meta.notified[d.id]);
+    list.forEach((d) => { db.meta.notified[d.id] = d.end; });
+    return list;
+  });
+  const nf = new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 0 });
+  for (const d of fresh.slice(0, 5)) {
+    await browser.notifications.create(`wmt-deal:${d.id}`, {
+      type: 'basic',
+      iconUrl: browser.runtime.getURL('icons/icon-96.png'),
+      title: `Bonne affaire : ${d.card}${d.rarity ? ` (${d.rarity})` : ''} ${Math.round(d.diff * 100)} %`,
+      message: `${d.hasBid ? 'Prochaine mise' : 'Mise de départ'} ${nf.format(d.next)} W · médiane ${nf.format(Math.round(d.median))} W (${d.n} ventes) · fin dans ${timeLeft(d.end - now)}`
+    });
+  }
+  if (fresh.length > 5) {
+    await browser.notifications.create('wmt-deals-more', {
+      type: 'basic',
+      iconUrl: browser.runtime.getURL('icons/icon-96.png'),
+      title: `${fresh.length - 5} autre(s) bonne(s) affaire(s)`,
+      message: 'Liste complète dans le popup de l\'extension.'
+    });
+  }
+  return fresh;
 }
 
 /* ------------------------------------------------------------------------ */
@@ -502,4 +575,4 @@ async function importFromSheet() {
 }
 
 // For the Node tests.
-globalThis.__wmt = { ingest, onApiRequest, resolveTick };
+globalThis.__wmt = { ingest, onApiRequest, resolveTick, notifyDeals };

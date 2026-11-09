@@ -29,6 +29,15 @@
       resolveSpacingSec: 60,
       resolveMaxPerDay: 300
     },
+    features: {
+      fullArt: false,              // illustration over the whole card, on the site
+      fullArtRarities: ['L', 'UR'],
+      deals: true,                 // "Bonnes affaires en cours" list in the popup
+      notify: false,               // desktop notification for a new deal (optional permission)
+      alertPct: 25,                // a deal: price to take it <= median - alertPct %
+      alertMinSales: 3,            // ignore medians built on fewer sales
+      alertScope: 'tracked'        // 'tracked' or 'all' cards with market data
+    },
     sheets: {
       scriptUrl: '',
       secret: '',
@@ -90,6 +99,18 @@
     s.valuation.targetMarginPct = num(v.targetMarginPct, DEFAULTS.valuation.targetMarginPct, 0, 1000);
     s.valuation.unmatched = v.unmatched === 'zero' ? 'zero' : 'ignore';
 
+    var ft = raw.features || {};
+    var RARITIES = ['L', 'UR', 'SR', 'R', 'PC', 'C'];
+    if (ft.fullArt !== undefined) s.features.fullArt = !!ft.fullArt;
+    if (Array.isArray(ft.fullArtRarities)) {
+      s.features.fullArtRarities = RARITIES.filter(function (r) { return ft.fullArtRarities.indexOf(r) >= 0; });
+    }
+    if (ft.deals !== undefined) s.features.deals = !!ft.deals;
+    if (ft.notify !== undefined) s.features.notify = !!ft.notify;
+    s.features.alertPct = num(ft.alertPct, DEFAULTS.features.alertPct, 1, 95);
+    s.features.alertMinSales = Math.round(num(ft.alertMinSales, DEFAULTS.features.alertMinSales, 1, 100));
+    s.features.alertScope = ft.alertScope === 'all' ? 'all' : 'tracked';
+
     var mk = raw.market || {};
     if (mk.overlay !== undefined) s.market.overlay = !!mk.overlay;
     s.market.dealPct = num(mk.dealPct, DEFAULTS.market.dealPct, 1, 90);
@@ -105,7 +126,7 @@
     return !!(s && s.sheets && s.sheets.scriptUrl && s.sheets.secret);
   }
 
-  var api = { DEFAULTS: DEFAULTS, normalize: normalize, sheetsConfigured: sheetsConfigured };
+  var api = { DEFAULTS: DEFAULTS, RARITIES: ['L', 'UR', 'SR', 'R', 'PC', 'C'], normalize: normalize, sheetsConfigured: sheetsConfigured };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.WMSettings = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

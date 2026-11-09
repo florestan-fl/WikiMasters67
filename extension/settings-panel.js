@@ -32,6 +32,15 @@ function renderAll() {
   $('dealPct').value = settings.market.dealPct;
   $('mWindowDays').value = settings.market.windowDays;
   $('useEstimates').checked = settings.market.useEstimates;
+  const ft = settings.features;
+  $('fullArt').checked = ft.fullArt;
+  renderRarities();
+  $('deals').checked = ft.deals;
+  $('notify').checked = ft.notify;
+  $('alertPct').value = ft.alertPct;
+  $('alertMinSales').value = ft.alertMinSales;
+  $('alertScope').value = ft.alertScope;
+  renderDealsStatus();
   $('autoResolve').checked = settings.market.autoResolve;
   $('resolveSpacingSec').value = settings.market.resolveSpacingSec;
   $('resolveMaxPerDay').value = settings.market.resolveMaxPerDay;
@@ -164,6 +173,14 @@ function readForm() {
   settings.market.dealPct = $('dealPct').value;
   settings.market.windowDays = $('mWindowDays').value;
   settings.market.useEstimates = $('useEstimates').checked;
+  const ft = settings.features;
+  ft.fullArt = $('fullArt').checked;
+  ft.fullArtRarities = [...document.querySelectorAll('#fullArtRarities input:checked')].map((i) => i.value);
+  ft.deals = $('deals').checked;
+  ft.notify = $('notify').checked;
+  ft.alertPct = $('alertPct').value;
+  ft.alertMinSales = $('alertMinSales').value;
+  ft.alertScope = $('alertScope').value;
   settings.market.autoResolve = $('autoResolve').checked;
   settings.market.resolveSpacingSec = $('resolveSpacingSec').value;
   settings.market.resolveMaxPerDay = $('resolveMaxPerDay').value;
@@ -182,15 +199,51 @@ async function save() {
   // Keep empty rows on screen while typing, but store only meaningful ones.
   const toStore = WMSettings.normalize(settings);
   await browser.storage.local.set({ settings: toStore });
+  renderDealsStatus();
   $('saved').textContent = `Enregistré à ${new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`;
 }
 
 ['windowDays', 'sampleSize', 'haircutPct', 'commissionPct', 'targetMarginPct', 'unmatched', 'overlay', 'dealPct', 'mWindowDays',
-  'useEstimates', 'resolveSpacingSec', 'resolveMaxPerDay', 'scriptUrl', 'secret', 'autoExport']
+  'useEstimates', 'resolveSpacingSec', 'resolveMaxPerDay', 'scriptUrl', 'secret', 'autoExport',
+  'fullArt', 'deals', 'alertPct', 'alertMinSales', 'alertScope']
   .forEach((id) => {
     $(id).addEventListener('input', () => scheduleSave());
     $(id).addEventListener('change', () => { scheduleSave(); renderSummary(); });
   });
+
+/* ----------------------------------------------------------- features */
+
+function renderRarities() {
+  const box = $('fullArtRarities');
+  box.textContent = '';
+  WMSettings.RARITIES.forEach((r) => {
+    const input = F.el('input', { type: 'checkbox', value: r, checked: settings.features.fullArtRarities.includes(r),
+      onchange: () => scheduleSave(true) });
+    box.append(F.el('label', { class: 'check' }, input, ` ${r}`));
+  });
+}
+
+// Desktop notifications need the optional "notifications" permission, asked on this click.
+$('notify').addEventListener('change', async (e) => {
+  if (e.target.checked) {
+    let granted = false;
+    try { granted = await browser.permissions.request({ permissions: ['notifications'] }); } catch (err) { granted = false; }
+    if (!granted) e.target.checked = false;
+  }
+  scheduleSave(true);
+});
+
+function renderDealsStatus() {
+  const box = $('deals-status');
+  if (!box) return;
+  const s = WMSettings.normalize(settings);
+  const match = WMStats.makeMatcher(s, db);
+  const list = WMMarket.deals(db, Date.now(), {
+    pct: s.features.alertPct, minSales: s.features.alertMinSales, windowDays: s.market.windowDays,
+    useEstimates: s.market.useEstimates, isEligible: s.features.alertScope === 'all' ? null : (c) => !!match(c)
+  });
+  box.textContent = `${list.length} bonne(s) affaire(s) en cours avec ces réglages, parmi les enchères vues ces 2 dernières heures.`;
+}
 
 /* ------------------------------------------------------- final prices */
 
@@ -322,10 +375,11 @@ browser.storage.onChanged.addListener((changes, area) => {
     renderKnownCards();
     renderSummary();
     renderResolverStatus();
+    renderDealsStatus();
   }
   if (changes.resolver) renderResolverStatus();
   // Card followed from the site ("+ Suivre") while this tab is open.
-  if (changes.settings && !document.activeElement.closest('#tab-settings')) {
+  if (changes.settings && !document.activeElement.closest('#tab-settings, #tab-features')) {
     settings = WMSettings.normalize(changes.settings.newValue);
     renderAll();
   }

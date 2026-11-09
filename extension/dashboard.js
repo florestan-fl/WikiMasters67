@@ -4,7 +4,8 @@
 const F = WMFormat;
 const C = WMCharts;
 const $ = (id) => document.getElementById(id);
-const TABS = ['overview', 'market', 'cards', 'hours', 'prices', 'stock', 'tx', 'settings'];
+const TABS = ['overview', 'market', 'cards', 'hours', 'prices', 'stock', 'tx', 'features', 'settings'];
+const FORM_TABS = ['features', 'settings']; // rendered by settings-panel.js
 
 const state = {
   db: null,
@@ -110,7 +111,7 @@ $('price-card').addEventListener('change', (e) => { state.priceCard = e.target.v
 function render() {
   if (!state.model) return;
   renderWarnings();
-  if (state.tab === 'settings') return; // handled by settings-panel.js
+  if (FORM_TABS.includes(state.tab)) return; // handled by settings-panel.js
   C.destroyAll();
   ({ overview, market: renderMarket, cards: renderCards, hours: renderHours, prices: renderPrices, stock: renderStock, tx: renderTx })[state.tab]();
 }
@@ -118,7 +119,7 @@ function render() {
 function renderWarnings() {
   const box = $('warnings');
   box.textContent = '';
-  if (state.tab === 'settings') return;
+  if (FORM_TABS.includes(state.tab)) return;
   const meta = state.db.meta;
   if (meta.warning && Date.now() - meta.warning.t < 3 * 86400000) box.append(F.el('div', { class: 'notice warn', text: meta.warning.text }));
   state.model.warnings.forEach((w) => box.append(F.el('div', { class: 'notice warn', text: w })));
@@ -150,7 +151,7 @@ function renderChecks() {
   box.append(F.el('h3', { text: auto ? `File du relevé automatique (${pending.ended.length})` : `À vérifier (${pending.ended.length})` }));
   box.append(F.el('p', { class: 'small muted', text: auto
     ? `Enchères terminées de vos cartes suivies dont le prix final n'est pas encore connu. Le relevé automatique les traite une par une (toutes les ${state.settings.market.resolveSpacingSec} s, quand un onglet du jeu est ouvert). ${pending.upcoming} enchère(s) suivie(s) encore en cours.`
-    : `Enchères terminées de vos cartes suivies dont le prix final n'a pas été vu. Ouvrez-les sur le site pour l'enregistrer, ou activez le relevé automatique dans les paramètres. ${pending.upcoming} enchère(s) suivie(s) encore en cours.` }));
+    : `Enchères terminées de vos cartes suivies dont le prix final n'a pas été vu. Ouvrez-les sur le site pour l'enregistrer, ou activez le relevé automatique dans l'onglet Fonctionnalités. ${pending.upcoming} enchère(s) suivie(s) encore en cours.` }));
   if (!pending.ended.length) {
     box.append(F.el('p', { class: 'muted', text: 'Rien à vérifier.' }));
     return;
