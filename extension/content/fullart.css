@@ -1,64 +1,140 @@
 /*
- * Full art (WikiMasters Trading). Active only for the rarities listed in the
+ * Full art (WikiMasters Trading), only for the rarities listed in the
  * data-wmt-fullart attribute of <html> (set by content/site.js).
  *
- * Card layout on the site: card element with a glow-<rarity> class; the
- * illustration block is its direct child sized h-[45%]; the text follows.
- * The page layout is left as it is (every block keeps its place): only the
- * image is stretched behind the whole card, and the text block gets a dark
- * gradient so that it stays readable.
+ * A card is the parent of the illustration block (class h-[45%]); its rarity
+ * comes from its glow-<rarity> class or from data-wmt-card (set by site.js
+ * when the card has no glow class). The illustration block is stretched over
+ * the whole card, full-cover decoration layers (the rarity pattern) go under
+ * it, and the text blocks sit at the bottom, on top, in white.
  */
 
-html[data-wmt-fullart~="l"] .glow-l,
-html[data-wmt-fullart~="ur"] .glow-ur,
-html[data-wmt-fullart~="sr"] .glow-sr,
-html[data-wmt-fullart~="r"] .glow-r,
-html[data-wmt-fullart~="pc"] .glow-pc,
-html[data-wmt-fullart~="c"] .glow-c {
+html[data-wmt-fullart~="l"] :is(.glow-l, [data-wmt-card="l"]),
+html[data-wmt-fullart~="ur"] :is(.glow-ur, [data-wmt-card="ur"]),
+html[data-wmt-fullart~="sr"] :is(.glow-sr, [data-wmt-card="sr"]),
+html[data-wmt-fullart~="r"] :is(.glow-r, [data-wmt-card="r"]),
+html[data-wmt-fullart~="pc"] :is(.glow-pc, [data-wmt-card="pc"]),
+html[data-wmt-fullart~="c"] :is(.glow-c, [data-wmt-card="c"]) {
   position: relative !important;
-  isolation: isolate !important; /* the image below can sit under the text, inside the card */
+  isolation: isolate !important;
+  overflow: hidden !important;
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: flex-end !important;
 }
 
-html[data-wmt-fullart~="l"] .glow-l > [class*="h-[45%]"],
-html[data-wmt-fullart~="ur"] .glow-ur > [class*="h-[45%]"],
-html[data-wmt-fullart~="sr"] .glow-sr > [class*="h-[45%]"],
-html[data-wmt-fullart~="r"] .glow-r > [class*="h-[45%]"],
-html[data-wmt-fullart~="pc"] .glow-pc > [class*="h-[45%]"],
-html[data-wmt-fullart~="c"] .glow-c > [class*="h-[45%]"] {
-  position: static !important; /* keeps its place in the layout; its image is positioned on the card */
-}
-
-html[data-wmt-fullart~="l"] .glow-l > [class*="h-[45%]"] img,
-html[data-wmt-fullart~="ur"] .glow-ur > [class*="h-[45%]"] img,
-html[data-wmt-fullart~="sr"] .glow-sr > [class*="h-[45%]"] img,
-html[data-wmt-fullart~="r"] .glow-r > [class*="h-[45%]"] img,
-html[data-wmt-fullart~="pc"] .glow-pc > [class*="h-[45%]"] img,
-html[data-wmt-fullart~="c"] .glow-c > [class*="h-[45%]"] img {
+/* Illustration: the whole card. */
+html[data-wmt-fullart~="l"] :is(.glow-l, [data-wmt-card="l"]) > [class*="h-[45%]"],
+html[data-wmt-fullart~="ur"] :is(.glow-ur, [data-wmt-card="ur"]) > [class*="h-[45%]"],
+html[data-wmt-fullart~="sr"] :is(.glow-sr, [data-wmt-card="sr"]) > [class*="h-[45%]"],
+html[data-wmt-fullart~="r"] :is(.glow-r, [data-wmt-card="r"]) > [class*="h-[45%]"],
+html[data-wmt-fullart~="pc"] :is(.glow-pc, [data-wmt-card="pc"]) > [class*="h-[45%]"],
+html[data-wmt-fullart~="c"] :is(.glow-c, [data-wmt-card="c"]) > [class*="h-[45%]"] {
   position: absolute !important;
   inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  max-height: none !important;
+  margin: 0 !important;
+  z-index: 1 !important;
+  background-size: cover !important;
+  background-position: center !important;
+}
+
+html[data-wmt-fullart~="l"] :is(.glow-l, [data-wmt-card="l"]) > [class*="h-[45%]"] > img,
+html[data-wmt-fullart~="ur"] :is(.glow-ur, [data-wmt-card="ur"]) > [class*="h-[45%]"] > img,
+html[data-wmt-fullart~="sr"] :is(.glow-sr, [data-wmt-card="sr"]) > [class*="h-[45%]"] > img,
+html[data-wmt-fullart~="r"] :is(.glow-r, [data-wmt-card="r"]) > [class*="h-[45%]"] > img,
+html[data-wmt-fullart~="pc"] :is(.glow-pc, [data-wmt-card="pc"]) > [class*="h-[45%]"] > img,
+html[data-wmt-fullart~="c"] :is(.glow-c, [data-wmt-card="c"]) > [class*="h-[45%]"] > img,
+html[data-wmt-fullart~="l"] :is(.glow-l, [data-wmt-card="l"]) > [class*="h-[45%]"] > :has(img):not(img),
+html[data-wmt-fullart~="ur"] :is(.glow-ur, [data-wmt-card="ur"]) > [class*="h-[45%]"] > :has(img):not(img),
+html[data-wmt-fullart~="sr"] :is(.glow-sr, [data-wmt-card="sr"]) > [class*="h-[45%]"] > :has(img):not(img),
+html[data-wmt-fullart~="r"] :is(.glow-r, [data-wmt-card="r"]) > [class*="h-[45%]"] > :has(img):not(img),
+html[data-wmt-fullart~="pc"] :is(.glow-pc, [data-wmt-card="pc"]) > [class*="h-[45%]"] > :has(img):not(img),
+html[data-wmt-fullart~="c"] :is(.glow-c, [data-wmt-card="c"]) > [class*="h-[45%]"] > :has(img):not(img),
+html[data-wmt-fullart~="l"] :is(.glow-l, [data-wmt-card="l"]) > [class*="h-[45%]"] > :has(img):not(img) > img,
+html[data-wmt-fullart~="ur"] :is(.glow-ur, [data-wmt-card="ur"]) > [class*="h-[45%]"] > :has(img):not(img) > img,
+html[data-wmt-fullart~="sr"] :is(.glow-sr, [data-wmt-card="sr"]) > [class*="h-[45%]"] > :has(img):not(img) > img,
+html[data-wmt-fullart~="r"] :is(.glow-r, [data-wmt-card="r"]) > [class*="h-[45%]"] > :has(img):not(img) > img,
+html[data-wmt-fullart~="pc"] :is(.glow-pc, [data-wmt-card="pc"]) > [class*="h-[45%]"] > :has(img):not(img) > img,
+html[data-wmt-fullart~="c"] :is(.glow-c, [data-wmt-card="c"]) > [class*="h-[45%]"] > :has(img):not(img) > img {
   width: 100% !important;
   height: 100% !important;
   max-width: none !important;
   max-height: none !important;
   object-fit: cover !important;
-  z-index: -1 !important;
 }
 
-html[data-wmt-fullart~="l"] .glow-l > [class*="h-[45%]"] + *,
-html[data-wmt-fullart~="ur"] .glow-ur > [class*="h-[45%]"] + *,
-html[data-wmt-fullart~="sr"] .glow-sr > [class*="h-[45%]"] + *,
-html[data-wmt-fullart~="r"] .glow-r > [class*="h-[45%]"] + *,
-html[data-wmt-fullart~="pc"] .glow-pc > [class*="h-[45%]"] + *,
-html[data-wmt-fullart~="c"] .glow-c > [class*="h-[45%]"] + * {
-  background: linear-gradient(to top, rgba(8, 8, 8, 0.92) 0%, rgba(8, 8, 8, 0.75) 50%, rgba(8, 8, 8, 0) 100%) !important;
+/* Shade at the bottom of the picture, under the text. */
+html[data-wmt-fullart~="l"] :is(.glow-l, [data-wmt-card="l"]) > [class*="h-[45%]"]::after,
+html[data-wmt-fullart~="ur"] :is(.glow-ur, [data-wmt-card="ur"]) > [class*="h-[45%]"]::after,
+html[data-wmt-fullart~="sr"] :is(.glow-sr, [data-wmt-card="sr"]) > [class*="h-[45%]"]::after,
+html[data-wmt-fullart~="r"] :is(.glow-r, [data-wmt-card="r"]) > [class*="h-[45%]"]::after,
+html[data-wmt-fullart~="pc"] :is(.glow-pc, [data-wmt-card="pc"]) > [class*="h-[45%]"]::after,
+html[data-wmt-fullart~="c"] :is(.glow-c, [data-wmt-card="c"]) > [class*="h-[45%]"]::after {
+  content: "" !important;
+  position: absolute !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  height: 55% !important;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.82) 0%, rgba(0, 0, 0, 0.5) 45%, rgba(0, 0, 0, 0) 100%) !important;
+  pointer-events: none !important;
+  z-index: 1 !important;
 }
 
-html[data-wmt-fullart~="l"] .glow-l > [class*="h-[45%]"] + * *,
-html[data-wmt-fullart~="ur"] .glow-ur > [class*="h-[45%]"] + * *,
-html[data-wmt-fullart~="sr"] .glow-sr > [class*="h-[45%]"] + * *,
-html[data-wmt-fullart~="r"] .glow-r > [class*="h-[45%]"] + * *,
-html[data-wmt-fullart~="pc"] .glow-pc > [class*="h-[45%]"] + * *,
-html[data-wmt-fullart~="c"] .glow-c > [class*="h-[45%]"] + * * {
-  color: #f4f3ef !important;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.75);
+/* Decoration layers covering the card (rarity pattern, shine): under the picture. */
+html[data-wmt-fullart~="l"] :is(.glow-l, [data-wmt-card="l"]) > [class*="inset-0"]:not([class*="h-[45%]"]),
+html[data-wmt-fullart~="ur"] :is(.glow-ur, [data-wmt-card="ur"]) > [class*="inset-0"]:not([class*="h-[45%]"]),
+html[data-wmt-fullart~="sr"] :is(.glow-sr, [data-wmt-card="sr"]) > [class*="inset-0"]:not([class*="h-[45%]"]),
+html[data-wmt-fullart~="r"] :is(.glow-r, [data-wmt-card="r"]) > [class*="inset-0"]:not([class*="h-[45%]"]),
+html[data-wmt-fullart~="pc"] :is(.glow-pc, [data-wmt-card="pc"]) > [class*="inset-0"]:not([class*="h-[45%]"]),
+html[data-wmt-fullart~="c"] :is(.glow-c, [data-wmt-card="c"]) > [class*="inset-0"]:not([class*="h-[45%]"]) {
+  z-index: 0 !important;
+}
+
+/* Text blocks: on top of the picture, at the bottom, without their background. */
+html[data-wmt-fullart~="l"] :is(.glow-l, [data-wmt-card="l"]) > :not([class*="h-[45%]"]):not([class*="absolute"]):not([class*="fixed"]):not([class*="inset-0"]),
+html[data-wmt-fullart~="ur"] :is(.glow-ur, [data-wmt-card="ur"]) > :not([class*="h-[45%]"]):not([class*="absolute"]):not([class*="fixed"]):not([class*="inset-0"]),
+html[data-wmt-fullart~="sr"] :is(.glow-sr, [data-wmt-card="sr"]) > :not([class*="h-[45%]"]):not([class*="absolute"]):not([class*="fixed"]):not([class*="inset-0"]),
+html[data-wmt-fullart~="r"] :is(.glow-r, [data-wmt-card="r"]) > :not([class*="h-[45%]"]):not([class*="absolute"]):not([class*="fixed"]):not([class*="inset-0"]),
+html[data-wmt-fullart~="pc"] :is(.glow-pc, [data-wmt-card="pc"]) > :not([class*="h-[45%]"]):not([class*="absolute"]):not([class*="fixed"]):not([class*="inset-0"]),
+html[data-wmt-fullart~="c"] :is(.glow-c, [data-wmt-card="c"]) > :not([class*="h-[45%]"]):not([class*="absolute"]):not([class*="fixed"]):not([class*="inset-0"]) {
+  position: relative !important;
+  z-index: 2 !important;
+  flex: 0 0 auto !important;
+  height: auto !important;
+  min-height: 0 !important;
+  background: transparent !important;
+  color: #fff !important;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
+}
+
+html[data-wmt-fullart~="l"] :is(.glow-l, [data-wmt-card="l"]) > :not([class*="h-[45%]"]):not([class*="absolute"]):not([class*="fixed"]):not([class*="inset-0"]) :not(svg):not(svg *):not(:has(> svg)):not([class*="bg-"]),
+html[data-wmt-fullart~="ur"] :is(.glow-ur, [data-wmt-card="ur"]) > :not([class*="h-[45%]"]):not([class*="absolute"]):not([class*="fixed"]):not([class*="inset-0"]) :not(svg):not(svg *):not(:has(> svg)):not([class*="bg-"]),
+html[data-wmt-fullart~="sr"] :is(.glow-sr, [data-wmt-card="sr"]) > :not([class*="h-[45%]"]):not([class*="absolute"]):not([class*="fixed"]):not([class*="inset-0"]) :not(svg):not(svg *):not(:has(> svg)):not([class*="bg-"]),
+html[data-wmt-fullart~="r"] :is(.glow-r, [data-wmt-card="r"]) > :not([class*="h-[45%]"]):not([class*="absolute"]):not([class*="fixed"]):not([class*="inset-0"]) :not(svg):not(svg *):not(:has(> svg)):not([class*="bg-"]),
+html[data-wmt-fullart~="pc"] :is(.glow-pc, [data-wmt-card="pc"]) > :not([class*="h-[45%]"]):not([class*="absolute"]):not([class*="fixed"]):not([class*="inset-0"]) :not(svg):not(svg *):not(:has(> svg)):not([class*="bg-"]),
+html[data-wmt-fullart~="c"] :is(.glow-c, [data-wmt-card="c"]) > :not([class*="h-[45%]"]):not([class*="absolute"]):not([class*="fixed"]):not([class*="inset-0"]) :not(svg):not(svg *):not(:has(> svg)):not([class*="bg-"]) {
+  color: #fff !important;
+}
+
+html[data-wmt-fullart~="l"] :is(.glow-l, [data-wmt-card="l"]) > :not([class*="h-[45%]"]):not([class*="absolute"]):not([class*="fixed"]):not([class*="inset-0"]) [class*="border"],
+html[data-wmt-fullart~="ur"] :is(.glow-ur, [data-wmt-card="ur"]) > :not([class*="h-[45%]"]):not([class*="absolute"]):not([class*="fixed"]):not([class*="inset-0"]) [class*="border"],
+html[data-wmt-fullart~="sr"] :is(.glow-sr, [data-wmt-card="sr"]) > :not([class*="h-[45%]"]):not([class*="absolute"]):not([class*="fixed"]):not([class*="inset-0"]) [class*="border"],
+html[data-wmt-fullart~="r"] :is(.glow-r, [data-wmt-card="r"]) > :not([class*="h-[45%]"]):not([class*="absolute"]):not([class*="fixed"]):not([class*="inset-0"]) [class*="border"],
+html[data-wmt-fullart~="pc"] :is(.glow-pc, [data-wmt-card="pc"]) > :not([class*="h-[45%]"]):not([class*="absolute"]):not([class*="fixed"]):not([class*="inset-0"]) [class*="border"],
+html[data-wmt-fullart~="c"] :is(.glow-c, [data-wmt-card="c"]) > :not([class*="h-[45%]"]):not([class*="absolute"]):not([class*="fixed"]):not([class*="inset-0"]) [class*="border"] {
+  border-color: rgba(255, 255, 255, 0.25) !important;
+}
+
+/* Small absolute elements (badges, favourite star): above the picture. */
+html[data-wmt-fullart~="l"] :is(.glow-l, [data-wmt-card="l"]) > [class*="absolute"]:not([class*="h-[45%]"]):not([class*="inset-0"]),
+html[data-wmt-fullart~="ur"] :is(.glow-ur, [data-wmt-card="ur"]) > [class*="absolute"]:not([class*="h-[45%]"]):not([class*="inset-0"]),
+html[data-wmt-fullart~="sr"] :is(.glow-sr, [data-wmt-card="sr"]) > [class*="absolute"]:not([class*="h-[45%]"]):not([class*="inset-0"]),
+html[data-wmt-fullart~="r"] :is(.glow-r, [data-wmt-card="r"]) > [class*="absolute"]:not([class*="h-[45%]"]):not([class*="inset-0"]),
+html[data-wmt-fullart~="pc"] :is(.glow-pc, [data-wmt-card="pc"]) > [class*="absolute"]:not([class*="h-[45%]"]):not([class*="inset-0"]),
+html[data-wmt-fullart~="c"] :is(.glow-c, [data-wmt-card="c"]) > [class*="absolute"]:not([class*="h-[45%]"]):not([class*="inset-0"]) {
+  z-index: 3 !important;
 }

@@ -41,10 +41,16 @@
   }
 
   /* ---------------------------------------------------------- full art */
-  // One attribute on <html> lists the rarities drawn full art (content/fullart.css
-  // does the rest: no per-card work). React 19 wipes every attribute of <html>
-  // when it (re)acquires it, so an observer of that one attribute puts it back.
+  // One attribute on <html> lists the rarities drawn full art; content/fullart.css
+  // does the rest. React 19 wipes every attribute of <html> when it (re)acquires
+  // it, so an observer of that one attribute puts it back.
+  // A card is the parent of the illustration block (class h-[45%]). The CSS
+  // finds its rarity from its glow-<rarity> class; cards without that class
+  // (some lists) are marked once with data-wmt-card="<rarity>", read from the
+  // rarity badge printed on the card.
   var FULL_ART = 'data-wmt-fullart';
+  var CARD_ATTR = 'data-wmt-card';
+  var RARITY = /^(l|ur|sr|r|pc|c)$/;
   var fullArt = '';
   var fullArtGuard = null;
 
@@ -59,10 +65,37 @@
         });
         fullArtGuard.observe(root, { attributes: true, attributeFilter: [FULL_ART] });
       }
+      markCards();
     } else {
       if (fullArtGuard) fullArtGuard.disconnect();
       fullArtGuard = null;
       root.removeAttribute(FULL_ART);
+    }
+  }
+
+  function cardRarity(card) {
+    var m;
+    for (var k = 0; k < card.classList.length; k++) {
+      m = /^glow-([a-z]+)$/.exec(card.classList[k]);
+      if (m && RARITY.test(m[1])) return m[1];
+    }
+    var els = card.querySelectorAll('span, div, p, b, strong');
+    for (var i = 0; i < els.length; i++) {
+      if (els[i].children.length) continue;
+      var t = (els[i].textContent || '').trim().toLowerCase();
+      if (RARITY.test(t)) return t;
+    }
+    return '';
+  }
+
+  function markCards() {
+    if (!fullArt || !document.body) return;
+    var arts = document.querySelectorAll('[class*="h-[45%]"]');
+    for (var i = 0; i < arts.length; i++) {
+      var card = arts[i].parentElement;
+      if (!card || card === document.body) continue;
+      var r = cardRarity(card);
+      if (r && card.getAttribute(CARD_ATTR) !== r) card.setAttribute(CARD_ATTR, r);
     }
   }
 
@@ -188,6 +221,7 @@
   async function scan() {
     timer = null;
     sendBalance();
+    markCards();
     if (!enabled) { removeAll(); return; }
     var labels = findLabels();
     if (!labels.length) return;
