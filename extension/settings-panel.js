@@ -216,10 +216,10 @@ async function save() {
 function renderRarities() {
   const box = $('fullArtRarities');
   box.textContent = '';
-  WMSettings.RARITIES.forEach((r) => {
+  WMSettings.FULLART_RARITIES.forEach((r) => {
     const input = F.el('input', { type: 'checkbox', value: r, checked: settings.features.fullArtRarities.includes(r),
       onchange: () => scheduleSave(true) });
-    box.append(F.el('label', { class: 'check' }, input, ` ${r}`));
+    box.append(F.el('label', { class: 'check' }, input, ` ${r === 'SHINY' ? 'Shiny' : r}`));
   });
 }
 

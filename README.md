@@ -71,7 +71,7 @@ Since the extension sends nothing to the game, a deal is only spotted when the M
     * with a bid, the **next minimum bid**: `ceil(current bid × 1.1)`, for example 750 → 825;
     * with no bid, the **starting price**.
   * **+ Suivre** (follow) for a card you don't follow yet.
-* **Full art** (*Fonctionnalités*, off by default): the card illustration covers the whole card, and the name, pills and stats sit at the bottom in white over a dark shade. Choose the rarities (L and UR by default). The rarity comes from the card's glow, or else from the rarity badge printed on it (Marché lists). The game re-renders the page often, so the extension puts the setting back each time.
+* **Full art** (*Fonctionnalités*, off by default): the card's picture covers the whole card, the title and stats sit at the bottom on a dark gradient, the summary unfolds on hover, and a thin border shows the rarity colour. Choose the rarities (L and UR by default, Shiny too). Only cards shown with their picture change (not the Marché listings without one). Same rules as the WM Tracker extension; the game re-renders the page often, so the extension puts the setting back each time.
 
 ## The figures
 
@@ -162,7 +162,7 @@ extension/
   manifest.json
   background.js        passive capture (filterResponseData), optional final-price resolver, deal notifications, database, export, tab reuse
   content/site.js      balance read, market badges under the prices (optional), full-art switch
-  content/fullart.css  full art, per rarity (active only when <html data-wmt-fullart> lists the rarity): the h-[45%] art block covers the card
+  content/fullart.css  full art, per rarity (active only when <html data-wmt-fullart> lists the rarity), pure CSS
   lib/extract.js       your lists (won / history / selling) → records
   lib/market.js        auctions seen → market prices (median, P25–P75, trend, cheapest listing), estimates, "À vérifier" queue, deals
   lib/store.js         local database (insert-only, v1 import, exclusions, backups)

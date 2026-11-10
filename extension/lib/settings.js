@@ -100,10 +100,10 @@
     s.valuation.unmatched = v.unmatched === 'zero' ? 'zero' : 'ignore';
 
     var ft = raw.features || {};
-    var RARITIES = ['L', 'UR', 'SR', 'R', 'PC', 'C'];
+    var FULLART = ['L', 'UR', 'SR', 'R', 'PC', 'C', 'SHINY'];
     if (ft.fullArt !== undefined) s.features.fullArt = !!ft.fullArt;
     if (Array.isArray(ft.fullArtRarities)) {
-      s.features.fullArtRarities = RARITIES.filter(function (r) { return ft.fullArtRarities.indexOf(r) >= 0; });
+      s.features.fullArtRarities = FULLART.filter(function (r) { return ft.fullArtRarities.indexOf(r) >= 0; });
     }
     if (ft.deals !== undefined) s.features.deals = !!ft.deals;
     if (ft.notify !== undefined) s.features.notify = !!ft.notify;
@@ -126,7 +126,7 @@
     return !!(s && s.sheets && s.sheets.scriptUrl && s.sheets.secret);
   }
 
-  var api = { DEFAULTS: DEFAULTS, RARITIES: ['L', 'UR', 'SR', 'R', 'PC', 'C'], normalize: normalize, sheetsConfigured: sheetsConfigured };
+  var api = { DEFAULTS: DEFAULTS, RARITIES: ['L', 'UR', 'SR', 'R', 'PC', 'C'], FULLART_RARITIES: ['L', 'UR', 'SR', 'R', 'PC', 'C', 'SHINY'], normalize: normalize, sheetsConfigured: sheetsConfigured };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.WMSettings = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

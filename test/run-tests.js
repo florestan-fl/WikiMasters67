@@ -434,8 +434,8 @@ test('market: deals use the price to take the auction now, and skip what is not 
 test('settings: features are normalised', () => {
   const d = Settings.normalize({});
   assert.deepStrictEqual([d.features.fullArt, d.features.fullArtRarities, d.features.deals, d.features.notify], [false, ['L', 'UR'], true, false]);
-  const s = Settings.normalize({ features: { fullArt: true, fullArtRarities: ['SR', 'XX', 'L'], alertPct: 500, alertScope: 'weird' } });
-  assert.deepStrictEqual([s.features.fullArtRarities, s.features.alertPct, s.features.alertScope], [['L', 'SR'], 95, 'tracked']);
+  const s = Settings.normalize({ features: { fullArt: true, fullArtRarities: ['SR', 'XX', 'shiny', 'SHINY', 'L'], alertPct: 500, alertScope: 'weird' } });
+  assert.deepStrictEqual([s.features.fullArtRarities, s.features.alertPct, s.features.alertScope], [['L', 'SR', 'SHINY'], 95, 'tracked']);
 });
 
 test('stats: "Ne plus suivre" beats a category keyword', () => {
