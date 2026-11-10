@@ -30,7 +30,7 @@
   :root[data-wmt-fullart~="ur"] .glow-ur,
   :root[data-wmt-fullart~="l"] .glow-l,
   :root[data-wmt-fullart~="shiny"] .glow-shiny
-):has(> [class*="h-[45%]"] img[crossorigin]) > [class*="h-[45%]"] {
+):has(> [class*="h-[45%]"] img[crossorigin]):not(:root[data-wmt-fullart-wide="skip"] :has(> [class*="h-[45%]"] img[data-wmt-wide])) > [class*="h-[45%]"] {
   height: 100% !important;
 }
 
@@ -43,7 +43,7 @@
   :root[data-wmt-fullart~="ur"] .glow-ur,
   :root[data-wmt-fullart~="l"] .glow-l,
   :root[data-wmt-fullart~="shiny"] .glow-shiny
-):has(> [class*="h-[45%]"] img[crossorigin]) > [class*="top-[45%]"] {
+):has(> [class*="h-[45%]"] img[crossorigin]):not(:root[data-wmt-fullart-wide="skip"] :has(> [class*="h-[45%]"] img[data-wmt-wide])) > [class*="top-[45%]"] {
   top: auto !important;
   max-height: 100%;
   padding-top: 2.25rem !important;
@@ -58,7 +58,7 @@
   :root[data-wmt-fullart~="ur"] .glow-ur,
   :root[data-wmt-fullart~="l"] .glow-l,
   :root[data-wmt-fullart~="shiny"] .glow-shiny
-):has(> [class*="h-[45%]"] img[crossorigin]) > [class*="top-[45%]"] :is(h3, p, span, div) {
+):has(> [class*="h-[45%]"] img[crossorigin]):not(:root[data-wmt-fullart-wide="skip"] :has(> [class*="h-[45%]"] img[data-wmt-wide])) > [class*="top-[45%]"] :is(h3, p, span, div) {
   color: rgb(255 255 255 / 0.95) !important;
 }
 
@@ -70,7 +70,7 @@
   :root[data-wmt-fullart~="ur"] .glow-ur,
   :root[data-wmt-fullart~="l"] .glow-l,
   :root[data-wmt-fullart~="shiny"] .glow-shiny
-):has(> [class*="h-[45%]"] img[crossorigin]) > [class*="top-[45%]"] > h3 {
+):has(> [class*="h-[45%]"] img[crossorigin]):not(:root[data-wmt-fullart-wide="skip"] :has(> [class*="h-[45%]"] img[data-wmt-wide])) > [class*="top-[45%]"] > h3 {
   text-shadow: 0 1px 3px rgb(0 0 0 / 0.9);
 }
 
@@ -82,7 +82,7 @@
   :root[data-wmt-fullart~="ur"] .glow-ur,
   :root[data-wmt-fullart~="l"] .glow-l,
   :root[data-wmt-fullart~="shiny"] .glow-shiny
-):has(> [class*="h-[45%]"] img[crossorigin]) > [class*="top-[45%]"] [class*="border-black"] {
+):has(> [class*="h-[45%]"] img[crossorigin]):not(:root[data-wmt-fullart-wide="skip"] :has(> [class*="h-[45%]"] img[data-wmt-wide])) > [class*="top-[45%]"] [class*="border-black"] {
   border-color: rgb(255 255 255 / 0.25) !important;
 }
 
@@ -95,7 +95,7 @@
   :root[data-wmt-fullart~="ur"] .glow-ur,
   :root[data-wmt-fullart~="l"] .glow-l,
   :root[data-wmt-fullart~="shiny"] .glow-shiny
-):has(> [class*="h-[45%]"] img[crossorigin]) > [class*="top-[45%]"] svg[class*="text-red"] {
+):has(> [class*="h-[45%]"] img[crossorigin]):not(:root[data-wmt-fullart-wide="skip"] :has(> [class*="h-[45%]"] img[data-wmt-wide])) > [class*="top-[45%]"] svg[class*="text-red"] {
   color: rgb(248 113 113) !important;
 }
 
@@ -107,7 +107,7 @@
   :root[data-wmt-fullart~="ur"] .glow-ur,
   :root[data-wmt-fullart~="l"] .glow-l,
   :root[data-wmt-fullart~="shiny"] .glow-shiny
-):has(> [class*="h-[45%]"] img[crossorigin]) > [class*="top-[45%]"] svg[class*="text-blue"] {
+):has(> [class*="h-[45%]"] img[crossorigin]):not(:root[data-wmt-fullart-wide="skip"] :has(> [class*="h-[45%]"] img[data-wmt-wide])) > [class*="top-[45%]"] svg[class*="text-blue"] {
   color: rgb(96 165 250) !important;
 }
 
@@ -120,7 +120,7 @@
   :root[data-wmt-fullart~="ur"] .glow-ur,
   :root[data-wmt-fullart~="l"] .glow-l,
   :root[data-wmt-fullart~="shiny"] .glow-shiny
-):has(> [class*="h-[45%]"] img[crossorigin]) > [class*="top-[45%]"] > p {
+):has(> [class*="h-[45%]"] img[crossorigin]):not(:root[data-wmt-fullart-wide="skip"] :has(> [class*="h-[45%]"] img[data-wmt-wide])) > [class*="top-[45%]"] > p {
   flex: none !important;
   max-height: 0;
   opacity: 0;
@@ -135,7 +135,7 @@
   :root[data-wmt-fullart~="ur"] .glow-ur,
   :root[data-wmt-fullart~="l"] .glow-l,
   :root[data-wmt-fullart~="shiny"] .glow-shiny
-):has(> [class*="h-[45%]"] img[crossorigin]):is(:hover, :focus-within) > [class*="top-[45%]"] > p {
+):has(> [class*="h-[45%]"] img[crossorigin]):not(:root[data-wmt-fullart-wide="skip"] :has(> [class*="h-[45%]"] img[data-wmt-wide])):is(:hover, :focus-within) > [class*="top-[45%]"] > p {
   max-height: 12em;
   opacity: 1;
 }
@@ -148,7 +148,7 @@
   :root[data-wmt-fullart~="ur"] .glow-ur,
   :root[data-wmt-fullart~="l"] .glow-l,
   :root[data-wmt-fullart~="shiny"] .glow-shiny
-):has(> [class*="h-[45%]"] img[crossorigin]) > [class*="top-[45%]"] > p,
+):has(> [class*="h-[45%]"] img[crossorigin]):not(:root[data-wmt-fullart-wide="skip"] :has(> [class*="h-[45%]"] img[data-wmt-wide])) > [class*="top-[45%]"] > p,
 :is(
   :root[data-wmt-fullart~="c"] .glow-c,
   :root[data-wmt-fullart~="pc"] .glow-pc,
@@ -157,8 +157,56 @@
   :root[data-wmt-fullart~="ur"] .glow-ur,
   :root[data-wmt-fullart~="l"] .glow-l,
   :root[data-wmt-fullart~="shiny"] .glow-shiny
-):has(> [class*="h-[45%]"] img[crossorigin]) > [class*="top-[45%]"] > p * {
+):has(> [class*="h-[45%]"] img[crossorigin]):not(:root[data-wmt-fullart-wide="skip"] :has(> [class*="h-[45%]"] img[data-wmt-wide])) > [class*="top-[45%]"] > p * {
   color: rgb(255 255 255 / 0.85) !important;
+}
+
+/* Landscape pictures (marked data-wmt-wide by content/site.js), "fit" mode: the whole picture in
+ * the upper part, over a blurred, darkened copy of itself filling the card. ("skip" leaves those
+ * cards as the game draws them, see the guard; "crop" changes nothing here.) */
+:root[data-wmt-fullart-wide="fit"] :is(
+  :root[data-wmt-fullart~="c"] .glow-c,
+  :root[data-wmt-fullart~="pc"] .glow-pc,
+  :root[data-wmt-fullart~="r"] .glow-r,
+  :root[data-wmt-fullart~="sr"] .glow-sr,
+  :root[data-wmt-fullart~="ur"] .glow-ur,
+  :root[data-wmt-fullart~="l"] .glow-l,
+  :root[data-wmt-fullart~="shiny"] .glow-shiny
+):has(> [class*="h-[45%]"] img[crossorigin]):not(:root[data-wmt-fullart-wide="skip"] :has(> [class*="h-[45%]"] img[data-wmt-wide])) > [class*="h-[45%]"]:has(img[data-wmt-wide]) {
+  isolation: isolate;
+  overflow: hidden !important;
+  background: #0b0b0b;
+}
+
+:root[data-wmt-fullart-wide="fit"] :is(
+  :root[data-wmt-fullart~="c"] .glow-c,
+  :root[data-wmt-fullart~="pc"] .glow-pc,
+  :root[data-wmt-fullart~="r"] .glow-r,
+  :root[data-wmt-fullart~="sr"] .glow-sr,
+  :root[data-wmt-fullart~="ur"] .glow-ur,
+  :root[data-wmt-fullart~="l"] .glow-l,
+  :root[data-wmt-fullart~="shiny"] .glow-shiny
+):has(> [class*="h-[45%]"] img[crossorigin]):not(:root[data-wmt-fullart-wide="skip"] :has(> [class*="h-[45%]"] img[data-wmt-wide])) > [class*="h-[45%]"]:has(img[data-wmt-wide])::before {
+  content: "";
+  position: absolute;
+  inset: -24px;
+  z-index: -1;
+  background: var(--wmt-fa-bg, none) center / cover no-repeat;
+  filter: blur(14px) brightness(0.55) saturate(1.15);
+  pointer-events: none;
+}
+
+:root[data-wmt-fullart-wide="fit"] :is(
+  :root[data-wmt-fullart~="c"] .glow-c,
+  :root[data-wmt-fullart~="pc"] .glow-pc,
+  :root[data-wmt-fullart~="r"] .glow-r,
+  :root[data-wmt-fullart~="sr"] .glow-sr,
+  :root[data-wmt-fullart~="ur"] .glow-ur,
+  :root[data-wmt-fullart~="l"] .glow-l,
+  :root[data-wmt-fullart~="shiny"] .glow-shiny
+):has(> [class*="h-[45%]"] img[crossorigin]):not(:root[data-wmt-fullart-wide="skip"] :has(> [class*="h-[45%]"] img[data-wmt-wide])) > [class*="h-[45%]"] img[data-wmt-wide] {
+  object-fit: contain !important;
+  object-position: center 30% !important;
 }
 
 /* Rarity: thin border in its colour, above the picture, under the badge and the favourite star. */
@@ -170,7 +218,7 @@
   :root[data-wmt-fullart~="ur"] .glow-ur,
   :root[data-wmt-fullart~="l"] .glow-l,
   :root[data-wmt-fullart~="shiny"] .glow-shiny
-):has(> [class*="h-[45%]"] img[crossorigin])::after {
+):has(> [class*="h-[45%]"] img[crossorigin]):not(:root[data-wmt-fullart-wide="skip"] :has(> [class*="h-[45%]"] img[data-wmt-wide]))::after {
   content: "";
   position: absolute;
   inset: 0;

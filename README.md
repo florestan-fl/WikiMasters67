@@ -18,7 +18,7 @@ By default the extension **never** makes a request to wiki-masters.com: no API c
 | Your purchases (*Gagnées*), sales (*Historique*), active listings, auctions shown on the Marché | When **your** Marché page loads `/api/marketplace…`, Firefox gives the extension a copy of the response while passing it **unchanged** to the page (`webRequest.filterResponseData`) | No |
 | Your wikibidous balance | Read from the page header by the content script (read only) | No |
 | Market badge under the prices (optional) | Small elements **added** under "Mise actuelle / Mise de départ". The game's text is never modified | **Yes**: a change on the page. Turn it off in *Fonctionnalités* |
-| Full art (optional, **off** by default) | A stylesheet that stretches the illustration over the whole card, for the rarities you choose. No element is added or moved | **Yes**: the page looks different |
+| Full art (optional, **off** by default) | A stylesheet that stretches the illustration over the whole card, for the rarities you choose. No element is added or moved; landscape pictures get a `data-wmt-wide` mark | **Yes**: the page looks different |
 | Deals list and notifications | Computed from the auctions already received while you browse | No |
 | Final prices of ended auctions (optional, **off** by default) | One request per auction of a followed card, at a fixed interval (see below) | **Yes**: these are requests sent by the extension |
 
@@ -71,7 +71,7 @@ Since the extension sends nothing to the game, a deal is only spotted when the M
     * with a bid, the **next minimum bid**: `ceil(current bid × 1.1)`, for example 750 → 825;
     * with no bid, the **starting price**.
   * **+ Suivre** (follow) for a card you don't follow yet.
-* **Full art** (*Fonctionnalités*, off by default): the card's picture covers the whole card, the title and stats sit at the bottom on a dark gradient, the summary unfolds on hover, and a thin border shows the rarity colour. Choose the rarities (L and UR by default, Shiny too). Only cards shown with their picture change (not the Marché listings without one). Same rules as the WM Tracker extension; the game re-renders the page often, so the extension puts the setting back each time.
+* **Full art** (*Fonctionnalités*, off by default): the card's picture covers the whole card, the title and stats sit at the bottom on a dark gradient, the summary unfolds on hover, and a thin border shows the rarity colour. Choose the rarities (L and UR by default, Shiny too). Only cards shown with their picture change (not the Marché listings without one). Landscape pictures (wider than tall) would lose their sides, so you choose what to do with them: the whole picture over a blurred copy of itself (default), the normal card, or cropped. To tell them apart, the extension measures each card picture when it loads (only while full art is on). Same rules as the WM Tracker extension; the game re-renders the page often, so the extension puts the setting back each time.
 
 ## The figures
 

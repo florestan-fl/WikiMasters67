@@ -34,6 +34,7 @@ function renderAll() {
   $('useEstimates').checked = settings.market.useEstimates;
   const ft = settings.features;
   $('fullArt').checked = ft.fullArt;
+  $('fullArtWide').value = ft.fullArtWide;
   renderRarities();
   $('deals').checked = ft.deals;
   $('notify').checked = ft.notify;
@@ -175,6 +176,7 @@ function readForm() {
   settings.market.useEstimates = $('useEstimates').checked;
   const ft = settings.features;
   ft.fullArt = $('fullArt').checked;
+  ft.fullArtWide = $('fullArtWide').value;
   ft.fullArtRarities = [...document.querySelectorAll('#fullArtRarities input:checked')].map((i) => i.value);
   ft.deals = $('deals').checked;
   ft.notify = $('notify').checked;
@@ -205,7 +207,7 @@ async function save() {
 
 ['windowDays', 'sampleSize', 'haircutPct', 'commissionPct', 'targetMarginPct', 'unmatched', 'overlay', 'dealPct', 'mWindowDays',
   'useEstimates', 'resolveSpacingSec', 'resolveMaxPerDay', 'scriptUrl', 'secret', 'autoExport',
-  'fullArt', 'deals', 'alertPct', 'alertMinSales', 'alertScope']
+  'fullArt', 'fullArtWide', 'deals', 'alertPct', 'alertMinSales', 'alertScope']
   .forEach((id) => {
     $(id).addEventListener('input', () => scheduleSave());
     $(id).addEventListener('change', () => { scheduleSave(); renderSummary(); });

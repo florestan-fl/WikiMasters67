@@ -42,40 +42,71 @@
 
   /* ---------------------------------------------------------- full art */
   // One attribute on <html> lists the rarities drawn full art; content/fullart.css
-  // does the rest (no game node is touched, nothing runs per card). React 19 wipes
-  // every attribute of <html> when it (re)acquires it, so an observer of that one
-  // attribute puts it back.
+  // does the rest. React 19 wipes every attribute of <html> when it (re)acquires
+  // it, so an observer of those attributes puts them back.
+  // Landscape pictures: CSS cannot see an image's proportions, so while full art
+  // is on, each card picture (img[crossorigin]) is measured when it loads and a
+  // wide one gets data-wmt-wide, plus its address in --wmt-fa-bg on its picture
+  // zone for the blurred backdrop. data-wmt-fullart-wide on <html> picks what the
+  // CSS does with them (fit / skip / crop).
   var FULL_ART = 'data-wmt-fullart';
+  var FULL_ART_WIDE = 'data-wmt-fullart-wide';
+  var WIDE = 'data-wmt-wide';
+  var WIDE_RATIO = 1.1; // width / height above which a picture counts as landscape
   var fullArt = '';
+  var fullArtWide = 'fit';
   var fullArtGuard = null;
 
-  function applyFullArt(value) {
-    fullArt = value || '';
+  function putAttrs() {
+    var root = document.documentElement;
+    if (root.getAttribute(FULL_ART) !== fullArt) root.setAttribute(FULL_ART, fullArt);
+    if (root.getAttribute(FULL_ART_WIDE) !== fullArtWide) root.setAttribute(FULL_ART_WIDE, fullArtWide);
+  }
+
+  function measure(img) {
+    if (!img.naturalWidth || !img.naturalHeight) return;
+    var wide = img.naturalWidth / img.naturalHeight > WIDE_RATIO;
+    var zone = img.closest('[class*="h-[45%]"]');
+    if (wide) {
+      if (!img.hasAttribute(WIDE)) img.setAttribute(WIDE, '');
+      var url = 'url("' + String(img.currentSrc || img.src).replace(/["\\\n]/g, encodeURIComponent) + '")';
+      if (zone && zone.style.getPropertyValue('--wmt-fa-bg') !== url) zone.style.setProperty('--wmt-fa-bg', url);
+    } else if (img.hasAttribute(WIDE)) {
+      img.removeAttribute(WIDE);
+    }
+  }
+
+  function onImageLoad(e) {
+    var t = e.target;
+    if (fullArt && t && t.tagName === 'IMG' && t.hasAttribute('crossorigin')) measure(t);
+  }
+  document.addEventListener('load', onImageLoad, true);
+
+  function applyFullArt(settings) {
+    var f = settings && settings.features;
+    fullArt = f && f.fullArt && Array.isArray(f.fullArtRarities)
+      ? f.fullArtRarities.map(function (r) { return String(r).toLowerCase(); }).join(' ') : '';
+    fullArtWide = f && ['fit', 'skip', 'crop'].indexOf(f.fullArtWide) >= 0 ? f.fullArtWide : 'fit';
     var root = document.documentElement;
     if (fullArt) {
-      if (root.getAttribute(FULL_ART) !== fullArt) root.setAttribute(FULL_ART, fullArt);
+      putAttrs();
       if (!fullArtGuard) {
-        fullArtGuard = new MutationObserver(function () {
-          if (fullArt && root.getAttribute(FULL_ART) !== fullArt) root.setAttribute(FULL_ART, fullArt);
-        });
-        fullArtGuard.observe(root, { attributes: true, attributeFilter: [FULL_ART] });
+        fullArtGuard = new MutationObserver(function () { if (fullArt) putAttrs(); });
+        fullArtGuard.observe(root, { attributes: true, attributeFilter: [FULL_ART, FULL_ART_WIDE] });
       }
+      var imgs = document.querySelectorAll('img[crossorigin]');
+      for (var i = 0; i < imgs.length; i++) if (imgs[i].complete) measure(imgs[i]);
     } else {
       if (fullArtGuard) fullArtGuard.disconnect();
       fullArtGuard = null;
       root.removeAttribute(FULL_ART);
+      root.removeAttribute(FULL_ART_WIDE);
     }
   }
 
-  function fullArtValue(settings) {
-    var f = settings && settings.features;
-    if (!f || !f.fullArt || !Array.isArray(f.fullArtRarities)) return '';
-    return f.fullArtRarities.map(function (r) { return String(r).toLowerCase(); }).join(' ');
-  }
-
-  browser.storage.local.get('settings').then(function (d) { applyFullArt(fullArtValue(d.settings)); }).catch(function () {});
+  browser.storage.local.get('settings').then(function (d) { applyFullArt(d.settings); }).catch(function () {});
   browser.storage.onChanged.addListener(function (changes, area) {
-    if (area === 'local' && changes.settings) applyFullArt(fullArtValue(changes.settings.newValue));
+    if (area === 'local' && changes.settings) applyFullArt(changes.settings.newValue);
   });
 
   /* ----------------------------------------------------------- overlay */

@@ -32,6 +32,7 @@
     features: {
       fullArt: false,              // illustration over the whole card, on the site
       fullArtRarities: ['L', 'UR'],
+      fullArtWide: 'fit',          // landscape pictures: 'fit' (whole, blurred backdrop), 'skip' (normal card), 'crop'
       deals: true,                 // "Bonnes affaires en cours" list in the popup
       notify: false,               // desktop notification for a new deal (optional permission)
       alertPct: 25,                // a deal: price to take it <= median - alertPct %
@@ -105,6 +106,7 @@
     if (Array.isArray(ft.fullArtRarities)) {
       s.features.fullArtRarities = FULLART.filter(function (r) { return ft.fullArtRarities.indexOf(r) >= 0; });
     }
+    if (['fit', 'skip', 'crop'].indexOf(ft.fullArtWide) >= 0) s.features.fullArtWide = ft.fullArtWide;
     if (ft.deals !== undefined) s.features.deals = !!ft.deals;
     if (ft.notify !== undefined) s.features.notify = !!ft.notify;
     s.features.alertPct = num(ft.alertPct, DEFAULTS.features.alertPct, 1, 95);

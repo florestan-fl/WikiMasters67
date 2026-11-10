@@ -6,7 +6,7 @@
 <style>
   :root { --color-rarity-l: #ffe144; --color-rarity-ur: #fa9931; --color-rarity-sr: #ed6fa3; }
   body { background: #0c0d0c; color: #eee; font-family: system-ui, sans-serif; margin: 0; padding: 20px; }
-  .grid { display: flex; gap: 16px; }
+  .grid { display: flex; gap: 16px; flex-wrap: wrap; }
   .tile { background: #161716; border: 1px solid #2a2b2a; border-radius: 16px; padding: 14px; width: 200px; }
   .card { position: relative; width: 200px; height: 280px; border-radius: 16px; overflow: hidden; }
   .frame { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
@@ -60,6 +60,23 @@
           </div>
         </div>
         <div class="under">MISE DE DÉPART 9 100</div>
+      </div>
+      <div class="tile">
+        <div class="card relative overflow-hidden rounded-2xl glow-sr">
+          <img class="frame absolute inset-0 h-full w-full object-cover" alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='420'%3E%3Crect width='300' height='420' fill='%23e46aa6'/%3E%3Ccircle cx='80' cy='120' r='15' fill='none' stroke='%23f6a8cf' stroke-width='9'/%3E%3Ccircle cx='80' cy='120' r='45' fill='none' stroke='%23f6a8cf' stroke-width='9'/%3E%3Ccircle cx='80' cy='120' r='75' fill='none' stroke='%23f6a8cf' stroke-width='9'/%3E%3Ccircle cx='80' cy='120' r='105' fill='none' stroke='%23f6a8cf' stroke-width='9'/%3E%3Ccircle cx='80' cy='120' r='135' fill='none' stroke='%23f6a8cf' stroke-width='9'/%3E%3Ccircle cx='80' cy='120' r='165' fill='none' stroke='%23f6a8cf' stroke-width='9'/%3E%3Ccircle cx='80' cy='120' r='195' fill='none' stroke='%23f6a8cf' stroke-width='9'/%3E%3Ccircle cx='80' cy='120' r='225' fill='none' stroke='%23f6a8cf' stroke-width='9'/%3E%3Ccircle cx='80' cy='120' r='255' fill='none' stroke='%23f6a8cf' stroke-width='9'/%3E%3Ccircle cx='80' cy='120' r='285' fill='none' stroke='%23f6a8cf' stroke-width='9'/%3E%3Ccircle cx='80' cy='120' r='315' fill='none' stroke='%23f6a8cf' stroke-width='9'/%3E%3Ccircle cx='80' cy='120' r='345' fill='none' stroke='%23f6a8cf' stroke-width='9'/%3E%3Ccircle cx='80' cy='120' r='375' fill='none' stroke='%23f6a8cf' stroke-width='9'/%3E%3C/svg%3E">
+          <div class="zone absolute inset-x-0 top-0 h-[45%] overflow-hidden"><img crossorigin="anonymous" class="pic h-full w-full object-cover" alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='600' height='340'%3E%3Crect width='600' height='340' fill='%23f2f2f2'/%3E%3Cellipse cx='300' cy='170' rx='230' ry='70' fill='%238c9a78'/%3E%3Ccircle cx='90' cy='120' r='45' fill='%238c9a78'/%3E%3Crect x='170' y='200' width='30' height='110' fill='%238c9a78'/%3E%3Crect x='400' y='200' width='30' height='110' fill='%238c9a78'/%3E%3Ctext x='300' y='60' font-size='34' text-anchor='middle' fill='%23333'%3EIMAGE EN LARGEUR%3C/text%3E%3C/svg%3E"><div class="band absolute inset-x-0 bottom-0 h-1/3 bg-gradient-to-t from-black/40"></div></div>
+          <span class="rbadge absolute left-2 top-2 z-30 rounded-md bg-black/60">SR</span>
+          <button class="fav absolute right-2 top-2 z-30" type="button">☆</button>
+          <div class="txt absolute inset-x-0 bottom-0 top-[45%] flex flex-col p-3">
+            <h3 class="name font-bold text-black">Iguanodon</h3>
+            <p class="desc flex-1 text-black/70">genre de dinosaures</p>
+            <div class="stats mt-auto flex justify-between border-t border-black/20 pt-1">
+              <span><svg class="text-red-700" width="12" height="12" viewBox="0 0 12 12"><path d="M1 1 11 11M11 1 1 11" stroke="currentColor" stroke-width="2"/></svg>6 621</span>
+              <span><svg class="text-blue-700" width="12" height="12" viewBox="0 0 12 12"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="2"/></svg>6 925</span>
+            </div>
+          </div>
+        </div>
+        <div class="under">image en largeur</div>
       </div>
       <div class="tile">
         <div class="card relative overflow-hidden rounded-2xl glow-sr">
