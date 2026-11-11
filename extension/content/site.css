@@ -38,3 +38,31 @@
 .wmt-follow:hover { background: rgba(98, 80, 214, 0.4); }
 .wmt-follow:disabled { opacity: 0.6; cursor: default; }
 .wmt-muted { color: #9a988f; font-weight: 400; }
+.wmt-badge { position: relative; }
+.wmt-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.wmt-menu {
+  position: absolute;
+  z-index: 50;
+  top: 100%;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 150px;
+  margin-top: 2px;
+  padding: 4px;
+  border-radius: 8px;
+  background: #1c1c1b;
+  border: 1px solid #3a3a37;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+}
+.wmt-menu button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  text-align: left;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: none;
+  color: #e9e8e3;
+}
+.wmt-menu button:hover { background: rgba(255, 255, 255, 0.08); }

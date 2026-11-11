@@ -4,6 +4,7 @@ A Firefox extension for [WikiMasters](https://www.wiki-masters.com/) players who
 
 * **Your trades:** every purchase and sale is recorded. You get the profit per day (realized and estimated), the value of your stock, and your best cards and hours.
 * **Market prices:** the median sale price, price range and trend for the cards you follow. Directly under the auctions on the site, the extension shows how the current price compares with the median.
+* **Groups:** your own groups of cards (for example Dinosaures, Peintures, Mythologie grecque), each with a colour, its own profit and charts, and its saved Marché searches. The extension tells you when a group has not been looked at for a while.
 * **Deals:** auctions you see that cost well below the median are listed in the popup, with an optional Firefox notification.
 * **Google Sheets (optional):** the extension fills in a spreadsheet, with charts, that you can read from anywhere.
 
@@ -11,7 +12,7 @@ Every player picks their own cards in the settings. Nothing in the code or the s
 
 ## Passive by default
 
-By default the extension **never** makes a request to wiki-masters.com: no API call, no background tab, no automatic page reload. It only reads what **your** browser already receives while you play. The one exception is the optional automatic reading of final prices, described below, which is off by default.
+By default the extension **never** makes a request to wiki-masters.com: no API call, no background tab, no automatic page reload. It only reads what **your** browser already receives while you play. The two exceptions are optional and off by default: the automatic reading of final prices, and the automated searches (both described below).
 
 | What | How | Visible to the site? |
 |---|---|---|
@@ -21,6 +22,8 @@ By default the extension **never** makes a request to wiki-masters.com: no API c
 | Full art (optional, **off** by default) | A stylesheet that stretches the illustration over the whole card, for the rarities you choose. No element is added or moved; landscape pictures get a `data-wmt-wide` mark | **Yes**: the page looks different |
 | Deals list and notifications | Computed from the auctions already received while you browse | No |
 | Final prices of ended auctions (optional, **off** by default) | One request per auction of a followed card, at a fixed interval (see below) | **Yes**: these are requests sent by the extension |
+| Your searches on the Marché | The search parameters your browser sends are remembered (to save them in a group and to know when you last ran them) | No |
+| Automated searches (optional, **off** by default) | The saved searches you tick "Auto", re-run by the extension at a fixed pace (see *Groups*) | **Yes**: these are requests sent by the extension |
 
 So, to record your transactions, **open the Marché at least every 2 days**. The site only lists your last 50 purchases and 50 sales, and the extension warns you if some may have been missed.
 
@@ -55,6 +58,27 @@ An auction is a deal when what it costs to take it now (the next minimum bid, or
 
 Since the extension sends nothing to the game, a deal is only spotted when the Marché page you are browsing receives it.
 
+## Groups
+
+Your own groups of cards, separate from the game's categories, in the dashboard's **Groupes** tab.
+
+* **Cards**: you add and remove them by hand only, with no rules or keywords. *+ Ajouter des cartes* lists every card the extension has seen (your transactions and the auctions you browsed). The filters by name, description or rarity only help you find cards: only the cards you tick are added. You can also choose a card's group from the Marché tab (menu on each row) or from the site (*+ Suivre* opens the list of groups).
+* **One group per card.** A card in a group is followed. Taking a card out of its group stops following it, unless it is also in your followed cards or selected by a keyword.
+* **Colour**: each new group takes the next free colour of the palette, and you can pick another one. Its panels, chips and chart lines use that colour.
+* **Statistics**: each group's panel shows its realized profit (7 days, 30 days, total), its stock and its deals in progress. Two charts compare the groups: realized profit per day and cumulative estimated trading. The **Groupe** selector at the top of the statistics tabs limits every tab (overview, Marché, Par carte, Par heure, Prix, Stock, Transactions) to one group, or to the followed cards in no group. The panels then take the group's colour.
+* **Saved searches**:
+  * **Saving one.** Run the search on the game's Marché (text, rarity filter, sort…). It then appears under *Recherches récentes* in the group, and in the popup with an *Enregistrer* button. The extension keeps the game's own parameters exactly as your browser sent them, so it never has to guess them.
+  * **Shortcut.** The *↗* button opens the page where you ran the search, in your game tab. If the game does not keep the search in the page address, the shortcut opens the Marché and you run the search again.
+  * **Last use.** Each time you run a saved search again on the site, the extension notices it. Each group shows when it was last searched ("vous il y a 3 j", plus the automated runs) and when its auctions were last seen. After *N* days without a search (3 by default, set per group), the group is flagged "À refaire" in the dashboard and listed in the popup under *Groupes à regarder*, with its shortcuts.
+  * **Automated runs** (*Fonctionnalités → Recherches automatiques*, off by default, Firefox asks for the "scripting" permission). The searches you tick "Auto" are re-run by the extension from your open game tab:
+    * the same request the Marché sends (first page);
+    * each search at most every 15 minutes (adjustable, 5 minimum);
+    * never two requests of the extension less than 30 s apart, resolver included;
+    * at most 200 per day.
+
+    The results feed the market prices, the deals and the notifications. Like the resolver, these requests do not try to look like a person. The game's rules forbid scripts, so turning this on is your own risk for your account.
+* **Annonces en cours vues pour ce groupe**: the running auctions of the group's cards received in the last 6 hours, filtered by rarity and sorted by end time, gap to the median or price. This is a search over what your browser already received: nothing is sent.
+
 ## The screens
 
 * **Popup** (toolbar icon). It shows the status: when your transactions were last read, the latest market data, your balance, and Google Sheets (with export progress). It also lists the deals in progress and the latest transactions recorded. Buttons: **Tableau de bord** (dashboard), **Prix du marché**, **Aller au Marché** (brings your Marché tab to the front, or opens it).
@@ -62,15 +86,17 @@ Since the extension sends nothing to the game, a deal is only spotted when the M
   * *Vue d'ensemble* (overview): realized profit per day, estimated trading profit, cumulative profit, net worth (balance + stock), stock cost vs value.
   * *Marché*: median of observed sales, P25–P75, min / max, 7 and 30 day trends, "Moins chère à enchérir" (the lowest next minimum bid or starting price among the listings seen), suggested max buy price. Followed cards or all cards seen. Click a card for its chart: observed sales, your purchases and the daily median.
   * *Prix* (prices): the average purchase price per day and per card over time (inflation); your purchases and sales of one card.
-  * *Par carte* (per card), *Par heure* (per hour), *Stock*, *Transactions* (with an **Exclure** box to remove one transaction from the stats).
-  * *Fonctionnalités* (features): every option that changes something on the site or sends something, each with its own switch: the median under the prices, full art, deals (list and notifications), automatic reading of final prices.
+  * *Groupes*: see above.
+  * *Stock*: how much of the stock value comes from each method (recent sales, listing, older sales, purchase cost). Click a card for its detail: the sales used (date, price, yours / seen on the market / estimate ≈) or the listing used, and the formula (median × (1 − commission) × (1 − discount) × quantity). The overview's *Valeur estimée du stock* tile opens it.
+  * *Par carte* (per card), *Par heure* (per hour), *Transactions* (with an **Exclure** box to remove one transaction from the stats, and a **Booster** box on sales).
+  * *Fonctionnalités* (features): every option that changes something on the site or sends something, each with its own switch: the median under the prices, full art, deals (list and notifications), automated searches, automatic reading of final prices.
   * *Paramètres* (settings): followed cards and excluded cards, market period, stock valuation, Google Sheets, backup.
 * **On the site**, under each auction's price:
   * **Médiane 4 832**: click it to open the card's detail in the dashboard. Hover for the number of sales, P25–P75 and the trend.
   * A pill such as **−33 %**: what it costs to take the auction now, compared with the median. Green when it is at least 15 % below, red when it is at least 15 % above (the threshold is adjustable). That cost is:
     * with a bid, the **next minimum bid**: `ceil(current bid × 1.1)`, for example 750 → 825;
     * with no bid, the **starting price**.
-  * **+ Suivre** (follow) for a card you don't follow yet.
+  * **+ Suivre** (follow) for a card you don't follow yet. With groups, it opens the list of your groups. A followed card in a group shows a dot of the group's colour.
 * **Full art** (*Fonctionnalités*, off by default): the card's picture covers the whole card, the title and stats sit at the bottom on a dark gradient, the summary unfolds on hover, and a thin border shows the rarity colour. Choose the rarities (L and UR by default, Shiny too). Only cards shown with their picture change (not the Marché listings without one). Landscape pictures (wider than tall) would lose their sides, so you choose what to do with them: the whole picture over a blurred copy of itself (default), the normal card, or cropped. To tell them apart, the extension measures each card picture when it loads (only while full art is on). Same rules as the WM Tracker extension; the game re-renders the page often, so the extension puts the setting back each time.
 
 ## The figures
@@ -84,9 +110,10 @@ Since the extension sends nothing to the game, a deal is only spotted when the M
 | **Estimated net worth** | wikibidous balance (read on the site) + estimated stock value. |
 | **Market median** | median of observed sales over the period you choose (30 days by default). Shiny copies are counted separately. |
 | **Max buy price** | median ÷ (1 + target margin, 30 % by default). |
+| **Booster sale** | a sale ticked "Booster" (the card came from a booster you opened, you never bought it): profit = sale price (minus the commission) − the booster cost set in *Paramètres → Valorisation du stock* (0 by default). It uses no purchase. |
 
 A transaction counts toward the stats when all of these hold:
-* its card is followed (by name, or by a keyword in its Wikipedia description), and it is not on the exclusion list. "Ne plus suivre" on a card that a keyword selects puts it on that list, which you can edit in the settings;
+* its card is followed (by name, by being in one of your groups, or by a keyword in its Wikipedia description), and it is not on the exclusion list. "Ne plus suivre" on a card that a keyword selects puts it on that list, which you can edit in the settings;
 * it is not earlier than the "Suivie depuis" (tracked since) date;
 * it has not been excluded.
 
@@ -114,7 +141,7 @@ For a public listing with automatic updates, choose **On this site** instead (re
 * *wiki-masters.com*: to read the responses your pages receive, and to add the badges.
 * *script.google.com*: only for the optional Google Sheets export.
 * "Read and modify network requests" (`webRequest`): needed to copy the Marché responses. The extension only reads `/api/marketplace…` and forwards them unchanged.
-* *scripting* (optional, requested only when you turn on the automatic reading of final prices): to send those requests from your game tab.
+* *scripting* (optional, requested only when you turn on the automatic reading of final prices or the automated searches): to send those requests from your game tab.
 * *notifications* (optional, requested only when you turn on deal notifications).
 
 ### First run
@@ -133,7 +160,7 @@ The script creates the spreadsheet itself (tabs, formats and charts), so an empt
 4. **Deploy → New deployment** → ⚙ **Web app**, *Execute as*: **Me**, *Who has access*: **Anyone** → **Deploy** → copy the URL (`…/exec`).
 5. *Paramètres → Google Sheets*: paste the URL and the secret → **Tester la connexion** (test connection).
 
-The extension writes the tabs one by one: **Tableau de bord, Par jour, Inventaire, Par carte, Prix du marché, Par heure, Inflation (average purchase price per day and per card), Prix dans le temps, Achats, Ventes**. Progress is shown in the popup and the dashboard ("Remplissage de l'onglet « Achats » (9/10, 412 lignes)…").
+The extension writes the tabs one by one: **Tableau de bord, Par jour, Par groupe, Inventaire, Par carte, Prix du marché, Par heure, Inflation (average purchase price per day and per card), Prix dans le temps, Achats, Ventes**. The card tabs have a *Groupe* column, and *Ventes* a *Booster* column. Progress is shown in the popup and the dashboard ("Remplissage de l'onglet « Achats » (10/11, 412 lignes)…").
 
 With *Mettre à jour automatiquement* on, the export starts 90 seconds after new transactions arrive. The tabs are rewritten each time, so add your own tabs next to them. A tab with the same name that the script did not create is kept and renamed `… (v1)`.
 
@@ -151,7 +178,7 @@ When `Code.gs` changes: **Deploy → Manage deployments → ✏️ → Version: 
 
 ```bash
 node test/run-tests.js        # extraction, database, market, statistics, tables, Apps Script (fake runtime, real data)
-node test/background-test.js  # end-to-end: passive capture (no request to the game allowed), optional resolver (spacing, cap, retries), deal notifications
+node test/background-test.js  # end-to-end: passive capture (no request to the game allowed), groups, saved searches, optional resolver and automated searches (spacing, cap, retries), deal notifications
 npx web-ext lint --source-dir extension
 ```
 
@@ -160,11 +187,12 @@ npx web-ext lint --source-dir extension
 ```
 extension/
   manifest.json
-  background.js        passive capture (filterResponseData), optional final-price resolver, deal notifications, database, export, tab reuse
+  background.js        passive capture (filterResponseData), search capture, optional resolver and automated searches, deal notifications, database, export, tab reuse
   content/site.js      balance read, market badges under the prices (optional), full-art switch
   content/fullart.css  full art, per rarity (active only when <html data-wmt-fullart> lists the rarity), pure CSS
   lib/extract.js       your lists (won / history / selling) → records
   lib/market.js        auctions seen → market prices (median, P25–P75, trend, cheapest listing), estimates, "À vérifier" queue, deals
+  lib/searches.js      your Marché searches: parameters, last use, group activity
   lib/store.js         local database (insert-only, v1 import, exclusions, backups)
   lib/stats.js         FIFO, stock valuation, per day / card / hour statistics
   lib/tables.js        tables for Google Sheets and CSV

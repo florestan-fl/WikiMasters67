@@ -263,17 +263,26 @@
     return by;
   }
 
-  /** Lowest current listing price of a card (non-shiny) seen around time `at`. */
-  function askAt(db, baseKey, at) {
+  /**
+   * Cheapest listing of a card (non-shiny) seen in the 2 days before `at`:
+   * { id, price (next minimum bid or starting price), hasBid, seenAt, end }, or null.
+   */
+  function askDetail(db, baseKey, at) {
     var best = null;
     Object.keys(db.auctions || {}).forEach(function (id) {
       var a = db.auctions[id];
       if (a.mine || a.shiny || a.baseKey !== baseKey || a.price === null) return;
       if (a.seenAt > at || a.seenAt < at - 2 * DAY) return;
       var p = nextPrice(a);
-      if (best === null || p < best) best = p;
+      if (best === null || p < best.price) best = { id: id, price: p, hasBid: a.hasBid, seenAt: a.seenAt, end: a.end };
     });
     return best;
+  }
+
+  /** Lowest current listing price of a card (non-shiny) seen around time `at`. */
+  function askAt(db, baseKey, at) {
+    var best = askDetail(db, baseKey, at);
+    return best ? best.price : null;
   }
 
   function trend(sales, now, recentDays, refDays) {
@@ -433,7 +442,7 @@
 
   var api = {
     marketKey: marketKey, findAuctions: findAuctions, normalize: normalize, ingest: ingest, prune: prune,
-    allStats: allStats, dailyMedians: dailyMedians, askAt: askAt, overlayInfo: overlayInfo, quantile: quantile,
+    allStats: allStats, dailyMedians: dailyMedians, askAt: askAt, askDetail: askDetail, overlayInfo: overlayInfo, quantile: quantile,
     pendingChecks: pendingChecks, nextPrice: nextPrice, deals: deals, GRACE: GRACE
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

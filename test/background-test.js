@@ -16,7 +16,7 @@ const { loadCodeGs, FakeSheet, FakeSpreadsheet, parisDate } = require('./fake-ga
 const fx = require('./fixtures');
 
 const SCRIPT_URL = 'https://script.google.com/macros/s/AKfyc-test/exec';
-const LIBS = ['lib/extract.js', 'lib/time.js', 'lib/settings.js', 'lib/store.js', 'lib/market.js', 'lib/stats.js', 'lib/tables.js', 'background.js'];
+const LIBS = ['lib/extract.js', 'lib/time.js', 'lib/settings.js', 'lib/store.js', 'lib/market.js', 'lib/searches.js', 'lib/stats.js', 'lib/tables.js', 'background.js'];
 
 function v1Spreadsheet() {
   const achats = new FakeSheet('Achats', 999, 26);
@@ -214,12 +214,12 @@ async function main() {
   // 6. Export with per-tab progress.
   const exp = await send({ type: 'export' });
   assert.strictEqual(exp.ok, true, exp.error);
-  assert.strictEqual(exp.written.length, 10);
+  assert.strictEqual(exp.written.length, 11);
   const labels = exportStates.map((e) => e.label);
   assert.strictEqual(labels[0], 'Préparation des données…');
-  assert.ok(labels.some((l) => /^Remplissage de l'onglet « Achats » \(9\/10, \d+ lignes\)…$/.test(l)), labels.join('\n'));
-  assert.ok(/^Feuille « WikiMasters » à jour \(10 onglets\)\.$/.test(labels[labels.length - 1]));
-  assert.deepStrictEqual(ss.getSheets().slice(0, 10).map((s) => s.getName()), ['Tableau de bord', 'Par jour', 'Inventaire', 'Par carte',
+  assert.ok(labels.some((l) => /^Remplissage de l'onglet « Achats » \(10\/11, \d+ lignes\)…$/.test(l)), labels.join('\n'));
+  assert.ok(/^Feuille « WikiMasters » à jour \(11 onglets\)\.$/.test(labels[labels.length - 1]));
+  assert.deepStrictEqual(ss.getSheets().slice(0, 11).map((s) => s.getName()), ['Tableau de bord', 'Par jour', 'Par groupe', 'Inventaire', 'Par carte',
     'Prix du marché', 'Par heure', 'Inflation', 'Prix dans le temps', 'Achats', 'Ventes'], 'tabs in order although sent one by one');
   assert.ok(storage.lastExport && storage.lastExport.spreadsheet === 'WikiMasters');
 
@@ -330,10 +330,80 @@ async function main() {
   assert.strictEqual(notifications.length, 1, 'the same auction is notified once');
   assert.deepStrictEqual(pageRequests.length, 4, 'deal detection sends nothing to the game');
 
-  // 12. Unknown messages are ignored.
+  // 12. Groups and saved searches.
+  // A search on the Marché: remembered with the page it came from.
+  const searchUrl = 'https://www.wiki-masters.com/api/marketplace?search=dino&rarity=SR&page=1&limit=50';
+  const igua = (n, bid) => ({ id: `cccc0000-0000-4000-8000-00000000000${n}`, status: 'active', seller_id: 'other', card_id: 'c',
+    card: { wikipedia_title: 'Iguanodon', rarity: 'SR' }, snapshot_rarity: 'SR', effective_bid: bid, current_bid: bid, base_amount: 100,
+    end_at: new Date(Date.now() + 3600e3).toISOString() });
+  listeners.request.fn({ requestId: 's1', method: 'GET', url: searchUrl, documentUrl: 'https://www.wiki-masters.com/marketplace?search=dino' });
+  filters.s1.ondata({ data: new TextEncoder().encode(JSON.stringify({ auctions: [igua(1, 300)] })).buffer });
+  filters.s1.onstop();
+  await settle();
+  const logged = storage.db.meta.searchLog[storage.db.meta.searchLog.length - 1];
+  assert.deepStrictEqual([logged.query, logged.paged, logged.pageUrl, logged.results, clone(logged.cards)],
+    ['limit=50&rarity=SR&search=dino', true, 'https://www.wiki-masters.com/marketplace?search=dino', 1, ['Iguanodon']]);
+  assert.ok(storage.db.meta.searchUse[logged.query].user > 0);
+  assert.strictEqual(storage.db.meta.searchUse[logged.query].auto, undefined);
+
+  // "+ Suivre" into a group, move, unfollow.
+  storage.settings.groups = [{ id: 'dino', name: 'Dinosaures', cards: [] }, { id: 'art', name: 'Peintures', cards: [] }];
+  assert.strictEqual((await send({ type: 'follow', card: 'Iguanodon', group: 'dino' })).group, 'dino');
+  assert.deepStrictEqual(clone(storage.settings.groups[0].cards), ['Iguanodon']);
+  await send({ type: 'follow', card: 'Iguanodon', group: 'art' });
+  assert.deepStrictEqual([clone(storage.settings.groups[0].cards), clone(storage.settings.groups[1].cards)], [[], ['Iguanodon']], 'one group per card');
+  const ov2 = await send({ type: 'overlayInfo', tiles: [{ ref: 0, id: igua(1).id }] });
+  assert.deepStrictEqual([clone(ov2.items[0].group), ov2.items[0].tracked, ov2.groups.length], [{ id: 'art', name: 'Peintures', color: '#eb6834' }, true, 2]);
+  assert.strictEqual((await send({ type: 'follow', card: 'Iguanodon', follow: false })).followed, false);
+  assert.deepStrictEqual(clone(storage.settings.groups[1].cards), [], 'unfollowing takes it out of its group');
+  await send({ type: 'follow', card: 'Iguanodon', group: 'dino' });
+
+  // Save the search in the group (once).
+  assert.strictEqual((await send({ type: 'saveSearch', group: 'dino', search: clone(logged) })).ok, true);
+  assert.strictEqual((await send({ type: 'saveSearch', group: 'dino', search: clone(logged) })).already, true);
+  const saved = storage.settings.groups[0].searches[0];
+  assert.deepStrictEqual([saved.query, saved.paged, saved.pageUrl, saved.auto], [logged.query, true, logged.pageUrl, false]);
+
+  // Booster tag on a sale.
+  const saleId = Object.keys(storage.db.sales)[0];
+  await send({ type: 'setBooster', id: saleId, booster: true });
+  assert.strictEqual(storage.db.overrides[saleId].booster, true);
+
+  // 13. Optional automated searches: off by default, then fixed pace, from the game tab.
+  const S = ctx.__wmt;
+  const n0 = Date.now() + 10 * 60e3;
+  assert.strictEqual((await S.searchTick(n0)).skipped, 'off');
+  storage.settings.features = Object.assign({}, storage.settings.features, { autoSearch: true, autoSearchMin: 15, autoSearchMaxPerDay: 2 });
+  assert.strictEqual((await S.searchTick(n0)).skipped, 'empty', 'no search marked "auto" yet');
+  storage.settings.groups[0].searches[0].auto = true;
+  const runUrl = 'https://www.wiki-masters.com/api/marketplace?limit=50&rarity=SR&search=dino&page=1';
+  pageResponses[runUrl.split('/').pop()] = { auctions: [igua(2, 200)] };
+  const before13 = pageRequests.length;
+  assert.deepStrictEqual(clone(await S.searchTick(n0)), { query: logged.query, outcome: 'ok', found: 1 });
+  assert.deepStrictEqual(pageRequests.slice(before13), [runUrl], 'the same request as the Marché, first page');
+  assert.ok(storage.db.auctions[igua(2).id], 'results captured like a page load');
+  assert.strictEqual(storage.db.meta.searchUse[logged.query].auto, n0, 'counted as an automated run, not yours');
+  assert.strictEqual((await S.searchTick(n0 + 1000)).skipped, 'spacing', 'never two requests within 30 s');
+  assert.strictEqual((await R.resolveTick(n0 + 1000)).skipped, 'spacing', 'the resolver waits too');
+  assert.strictEqual((await S.searchTick(n0 + 60e3)).skipped, 'empty', 'each search at most every 15 min');
+  assert.strictEqual((await S.searchTick(n0 + 16 * 60e3)).outcome, 'ok');
+  assert.strictEqual((await S.searchTick(n0 + 32 * 60e3)).skipped, 'cap', 'daily cap (2 here)');
+  siteTabs = [];
+  storage.settings.features.autoSearchMaxPerDay = 100;
+  assert.strictEqual((await S.searchTick(n0 + 48 * 60e3)).skipped, 'no-tab');
+  siteTabs = [{ id: 7, url: 'https://www.wiki-masters.com/marketplace', windowId: 1 }];
+  assert.strictEqual(pageRequests.length, before13 + 2);
+
+  // Shortcut: the page where the search was made, in the game tab.
+  await send({ type: 'openSearch', pageUrl: saved.pageUrl });
+  assert.deepStrictEqual(tabUpdates.pop(), [7, { active: true, url: 'https://www.wiki-masters.com/marketplace?search=dino' }]);
+  await send({ type: 'openSearch', pageUrl: 'https://evil.example/' });
+  assert.deepStrictEqual(tabUpdates.pop(), [7, { active: true, url: 'https://www.wiki-masters.com/marketplace' }], 'only game pages');
+
+  // 14. Unknown messages are ignored.
   assert.strictEqual(send({ type: 'sync' }), undefined, 'there is no active "sync" any more');
 
-  console.log('ok   background.js end-to-end (passive capture, balance, overlay, follow, export progress, tab reuse, gap warning, backup, optional resolver)');
+  console.log('ok   background.js end-to-end (passive capture, balance, overlay, follow, groups, searches, booster, export progress, tab reuse, gap warning, backup, optional resolver, automated searches)');
 }
 
 main().catch((e) => {

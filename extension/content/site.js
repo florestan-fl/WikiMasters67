@@ -157,11 +157,51 @@
     return (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v) + ' %';
   }
 
+  var groups = []; // your groups ({ id, name, color }), for the "+ Suivre" menu
+
+  /** "+ Suivre" with groups: a small menu (in the badge) to choose the group. */
+  function followMenu(info, button, stop) {
+    var old = button.parentElement.querySelector('.wmt-menu');
+    if (old) { old.remove(); return; }
+    var menu = document.createElement('div');
+    menu.className = 'wmt-menu';
+    menu.setAttribute('role', 'menu');
+    var choices = groups.map(function (g) { return { id: g.id, name: g.name, color: g.color }; })
+      .concat([{ id: '', name: 'Sans groupe', color: '' }]);
+    choices.forEach(function (c) {
+      var item = document.createElement('button');
+      item.type = 'button';
+      item.setAttribute('role', 'menuitem');
+      if (c.color) {
+        var dot = document.createElement('span');
+        dot.className = 'wmt-dot';
+        dot.style.background = c.color;
+        item.appendChild(dot);
+      }
+      item.appendChild(document.createTextNode(c.name));
+      item.addEventListener('click', function (e) {
+        stop(e);
+        button.disabled = true;
+        menu.remove();
+        browser.runtime.sendMessage({ type: 'follow', card: info.card, group: c.id }).catch(function () {});
+      });
+      menu.appendChild(item);
+    });
+    button.insertAdjacentElement('afterend', menu);
+  }
+
   function badgeFor(info) {
     var b = document.createElement('div');
     b.className = 'wmt-badge';
     b.dataset.wmtSig = signature(info);
     var stop = function (e) { e.preventDefault(); e.stopPropagation(); };
+    if (info.group) {
+      var gd = document.createElement('span');
+      gd.className = 'wmt-dot';
+      gd.style.background = info.group.color;
+      gd.title = info.group.name;
+      b.appendChild(gd);
+    }
 
     if (info.median !== null && info.median !== undefined) {
       var med = document.createElement('button');
@@ -197,9 +237,10 @@
       f.type = 'button';
       f.className = 'wmt-follow';
       f.textContent = '+ Suivre';
-      f.title = 'Ajouter « ' + info.card + ' » à vos cartes suivies';
+      f.title = groups.length ? 'Suivre « ' + info.card + ' » : choisir son groupe' : 'Ajouter « ' + info.card + ' » à vos cartes suivies';
       f.addEventListener('click', function (e) {
         stop(e);
+        if (groups.length) { followMenu(info, f, stop); return; }
         f.disabled = true;
         browser.runtime.sendMessage({ type: 'follow', card: info.card }).catch(function () {});
       });
@@ -209,7 +250,7 @@
   }
 
   function signature(info) {
-    return [info.id, info.price, info.next, Math.round(info.median || 0), info.n, info.tracked ? 1 : 0].join('|');
+    return [info.id, info.price, info.next, Math.round(info.median || 0), info.n, info.tracked ? 1 : 0, info.group ? info.group.id + info.group.color : ''].join('|');
   }
 
   function insertionPoint(label, tile) {
@@ -238,6 +279,7 @@
     }
     if (!res || !res.ok) return;
     if (!res.enabled) { enabled = false; removeAll(); return; }
+    groups = Array.isArray(res.groups) ? res.groups : [];
     var byRef = {};
     (res.items || []).forEach(function (it) { byRef[it.ref] = it; });
     observer.disconnect();

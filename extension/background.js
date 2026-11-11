@@ -1,4 +1,4 @@
-/* global browser, WMExtract, WMStore, WMMarket, WMStats, WMTables, WMSettings, WMTime */
+/* global browser, WMExtract, WMStore, WMMarket, WMStats, WMTables, WMSettings, WMTime, WMSearches */
 'use strict';
 
 /*
@@ -42,9 +42,11 @@ function onApiRequest(details) {
     size += event.data.byteLength;
     if (size <= MAX_BODY) chunks.push(event.data);
   };
+  // The page the request came from (for a search: the page to reopen it).
+  const ctx = { pageUrl: details.documentUrl || details.originUrl || '', auto: isAutoRequest(details.url) };
   filter.onstop = () => {
     filter.close();
-    if (size <= MAX_BODY) handleBody(details.url, chunks).catch((e) => setCaptureError(String((e && e.message) || e)));
+    if (size <= MAX_BODY) handleBody(details.url, chunks, ctx).catch((e) => setCaptureError(String((e && e.message) || e)));
   };
   filter.onerror = () => {
     try { filter.disconnect(); } catch (e) { /* already gone */ }
@@ -52,7 +54,7 @@ function onApiRequest(details) {
   return {};
 }
 
-async function handleBody(url, chunks) {
+async function handleBody(url, chunks, ctx) {
   const bytes = new Uint8Array(chunks.reduce((n, c) => n + c.byteLength, 0));
   let offset = 0;
   for (const c of chunks) { bytes.set(new Uint8Array(c), offset); offset += c.byteLength; }
@@ -62,11 +64,15 @@ async function handleBody(url, chunks) {
   } catch (e) {
     return; // not JSON (error page…): ignore
   }
-  await ingest(url, json, Date.now());
+  await ingest(url, json, Date.now(), ctx);
 }
 
-/** Exposed for tests: processes one API answer. */
-async function ingest(url, json, now) {
+/**
+ * Exposed for tests: processes one API answer.
+ * ctx: { pageUrl, auto } — the page that sent it; auto: sent by the automated searches.
+ */
+async function ingest(url, json, now, ctx) {
+  ctx = ctx || {};
   const settings = await getSettings();
   const result = await withDb((db) => {
     const match = WMStats.makeMatcher(settings, db);
@@ -84,6 +90,14 @@ async function ingest(url, json, now) {
     out.auctions = m.auctions;
     out.marketSales = m.sales;
     out.ids = m.ids;
+    // A search on the Marché (not your own lists, not an auction page): remembered for your groups.
+    const search = WMSearches.parse(url);
+    if (search) {
+      const titles = [];
+      m.ids.forEach((id) => { const a = db.auctions[id]; if (a && !titles.includes(a.card)) titles.push(a.card); });
+      WMSearches.record(db, { query: search.query, paged: search.paged, pageUrl: ctx.pageUrl || '', at: now, results: m.auctions, cards: titles, auto: !!ctx.auto });
+      out.search = search.query;
+    }
     if (out.own || m.auctions) {
       db.meta.lastCapture = now;
       db.meta.lastCaptureKind = out.own ? 'own' : 'market';
@@ -192,11 +206,13 @@ async function notifyDeals(ids, now) {
     return list;
   });
   const nf = new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 0 });
+  const groupOf = WMStats.groupOf(settings);
   for (const d of fresh.slice(0, 5)) {
+    const g = groupOf(d.card);
     await browser.notifications.create(`wmt-deal:${d.id}`, {
       type: 'basic',
       iconUrl: browser.runtime.getURL('icons/icon-96.png'),
-      title: `Bonne affaire : ${d.card}${d.rarity ? ` (${d.rarity})` : ''} ${Math.round(d.diff * 100)} %`,
+      title: `Bonne affaire : ${d.card}${d.rarity ? ` (${d.rarity})` : ''} ${Math.round(d.diff * 100)} %${g ? ` · ${g.name}` : ''}`,
       message: `${d.hasBid ? 'Prochaine mise' : 'Mise de départ'} ${nf.format(d.next)} W · médiane ${nf.format(Math.round(d.median))} W (${d.n} ventes) · fin dans ${timeLeft(d.end - now)}`
     });
   }
@@ -231,9 +247,14 @@ const RETRY_MS = 30 * 60000;
 const MAX_ATTEMPTS = 3;
 let resolving = false;
 
+const MIN_GAP_MS = 30 * 1000; // between any two requests of the extension (resolver, automated searches)
+
 browser.alarms.create(RESOLVE_ALARM, { periodInMinutes: 1 });
-browser.alarms.onAlarm.addListener((a) => {
-  if (a.name === RESOLVE_ALARM) resolveTick().catch((e) => setResolverState({ lastError: String((e && e.message) || e) }));
+browser.alarms.onAlarm.addListener(async (a) => {
+  if (a.name !== RESOLVE_ALARM) return;
+  // One after the other: never two requests of the extension at the same time.
+  await resolveTick().catch((e) => setResolverState({ lastError: String((e && e.message) || e) }));
+  await searchTick().catch((e) => setSearchState({ lastError: String((e && e.message) || e) }));
 });
 
 async function getResolverState() {
@@ -265,6 +286,7 @@ async function resolveTick(now) {
   if (!(await browser.permissions.contains({ permissions: ['scripting'] }))) return { skipped: 'permission' };
   const state = await getResolverState();
   if (now - state.lastAt < settings.market.resolveSpacingSec * 1000) return { skipped: 'spacing' };
+  if (now - (await getSearchState()).lastAt < MIN_GAP_MS) return { skipped: 'spacing' };
   if (state.count >= settings.market.resolveMaxPerDay) return { skipped: 'cap' };
 
   const db = await loadDb();
@@ -318,6 +340,101 @@ async function resolveTick(now) {
 }
 
 /* ------------------------------------------------------------------------ */
+/* Optional: automated saved searches (off by default)                      */
+/* ------------------------------------------------------------------------ */
+/*
+ * When "Recherches automatiques" is on, the saved searches of your groups
+ * marked "auto" are run by the extension itself, from your open game tab:
+ * the same request the Marché sends when you run that search (first page),
+ * each search at most every N minutes, one request at a time, at least 30 s
+ * after any other request of the extension, with a daily cap. The results go
+ * through the usual capture: market prices, deals and notifications.
+ * Like the resolver, it does not try to look like a person.
+ */
+
+const autoRequests = new Map(); // url -> time: lets the capture tell these requests from yours
+let searching = false;
+
+function isAutoRequest(url) {
+  const t = autoRequests.get(url);
+  return !!t && Date.now() - t < 60 * 1000;
+}
+
+async function getSearchState() {
+  const { autoSearch } = await browser.storage.local.get('autoSearch');
+  const today = WMTime.dayKey(Date.now());
+  const st = Object.assign({ day: today, count: 0, lastAt: 0, runs: {} }, autoSearch || {});
+  if (st.day !== today) Object.assign(st, { day: today, count: 0 });
+  return st;
+}
+
+async function setSearchState(patch) {
+  const st = Object.assign(await getSearchState(), patch);
+  await browser.storage.local.set({ autoSearch: st });
+  return st;
+}
+
+/** Saved searches marked "auto", one entry per distinct search. */
+function autoSearches(settings) {
+  const out = [];
+  const seen = new Set();
+  settings.groups.forEach((g) => g.searches.forEach((s) => {
+    if (!s.auto || seen.has(s.query)) return;
+    seen.add(s.query);
+    out.push({ group: g, search: s });
+  }));
+  return out;
+}
+
+/** One step: at most one request. */
+async function searchTick(now) {
+  now = now || Date.now();
+  const settings = await getSettings();
+  if (!settings.features.autoSearch || searching) return { skipped: 'off' };
+  if (!(await browser.permissions.contains({ permissions: ['scripting'] }))) return { skipped: 'permission' };
+  const st = await getSearchState();
+  if (st.count >= settings.features.autoSearchMaxPerDay) return { skipped: 'cap' };
+  const resolver = await getResolverState();
+  if (now - Math.max(st.lastAt, resolver.lastAt) < MIN_GAP_MS) return { skipped: 'spacing' };
+  const every = settings.features.autoSearchMin * 60000;
+  const due = autoSearches(settings)
+    .map((x) => Object.assign({ lastRun: st.runs[x.search.query] || 0 }, x))
+    .filter((x) => now - x.lastRun >= every)
+    .sort((a, b) => a.lastRun - b.lastRun)[0];
+  if (!due) return { skipped: 'empty' };
+  const tabs = (await browser.tabs.query({ url: SITE_MATCH })).filter((t) => !t.discarded && !t.incognito);
+  const tab = tabs[0];
+  if (!tab) return { skipped: 'no-tab' };
+
+  searching = true;
+  try {
+    const url = WMSearches.apiUrl(new URL(tab.url).origin, due.search);
+    const runs = Object.assign({}, st.runs, { [due.search.query]: now });
+    // Forget the runs of searches that are no longer automated.
+    const active = new Set(autoSearches(settings).map((x) => x.search.query));
+    Object.keys(runs).forEach((q) => { if (!active.has(q)) delete runs[q]; });
+    await setSearchState({ lastAt: now, count: st.count + 1, runs });
+    autoRequests.set(url, Date.now());
+    let json = null;
+    try {
+      const results = await browser.scripting.executeScript({ target: { tabId: tab.id }, world: 'MAIN', func: pageFetch, args: [url] });
+      const r = results && results[0] && results[0].result;
+      const res = typeof r === 'string' ? JSON.parse(r) : null;
+      if (res && res.status >= 200 && res.status < 300) json = JSON.parse(res.text);
+    } catch (e) {
+      json = null;
+    }
+    let found = 0;
+    if (json) found = (await ingest(url, json, now, { auto: true, pageUrl: due.search.pageUrl })).auctions;
+    const outcome = json ? 'ok' : 'no-answer';
+    await setSearchState({ lastLabel: due.search.label || WMSearches.describe(due.search.query), lastGroup: due.group.name, lastOutcome: outcome, lastFound: found, lastError: null });
+    return { query: due.search.query, outcome, found };
+  } finally {
+    searching = false;
+  }
+}
+
+/* ------------------------------------------------------------------------ */
 /* Messages                                                                 */
 /* ------------------------------------------------------------------------ */
 
@@ -326,7 +443,10 @@ browser.runtime.onMessage.addListener((msg, sender) => {
   switch (msg.type) {
     case 'balance': return safe(() => onBalance(msg.value));
     case 'overlayInfo': return safe(() => overlayInfo(msg.tiles || []));
-    case 'follow': return safe(() => follow(msg.card, msg.follow !== false));
+    case 'follow': return safe(() => follow(msg.card, msg.follow !== false, msg.group));
+    case 'setBooster': return safe(() => setBooster(msg.id, !!msg.booster));
+    case 'saveSearch': return safe(() => saveSearch(msg.group, msg.search));
+    case 'openSearch': return safe(() => openSearch(msg.pageUrl));
     case 'openDashboard': return safe(() => openDashboard(msg.hash || ''));
     case 'openMarketplace': return safe(() => openMarketplace());
     case 'popupOpened': return safe(() => clearBadge());
@@ -360,30 +480,70 @@ async function overlayInfo(tiles) {
   if (!settings.market.overlay) return { ok: true, enabled: false, items: [] };
   const db = await loadDb();
   const match = WMStats.makeMatcher(settings, db);
+  const groupOf = WMStats.groupOf(settings);
   const items = WMMarket.overlayInfo(db, tiles, (card) => !!match(card), Date.now(), settings.market.windowDays,
     settings.market.dealPct, settings.market.useEstimates);
-  return { ok: true, enabled: true, items };
+  items.forEach((it) => {
+    const g = it.found ? groupOf(it.card) : null;
+    if (g) it.group = { id: g.id, name: g.name, color: g.color };
+  });
+  return { ok: true, enabled: true, items, groups: settings.groups.map((g) => ({ id: g.id, name: g.name, color: g.color })) };
 }
 
 /**
- * Follow / unfollow one card. Unfollowing a card that a category keyword still
- * matches puts it on the exclusion list, which wins over keywords.
+ * Follow / unfollow one card. group (optional): the group to put it in
+ * ('' = followed, in no group). A card is in one group at most: following it
+ * in a group takes it out of the others. Unfollowing takes it out of its group
+ * and, when a category keyword still matches it, puts it on the exclusion
+ * list, which wins over keywords.
  */
-async function follow(card, on) {
+async function follow(card, on, group) {
   const settings = await getSettings();
   const db = await loadDb();
   const key = WMExtract.cardKey(card);
   const sameCard = (c) => WMExtract.cardKey(c.name) === key;
+  const outOfGroups = () => settings.groups.forEach((g) => { g.cards = g.cards.filter((n) => WMExtract.cardKey(n) !== key); });
   settings.tracking.excluded = settings.tracking.excluded.filter((c) => !sameCard(c));
   if (on) {
-    if (!WMStats.makeMatcher(settings, db)(card)) settings.tracking.cards.push({ name: String(card), since: '' });
+    const target = typeof group === 'string' ? settings.groups.find((g) => g.id === group) : null;
+    if (typeof group === 'string') outOfGroups();
+    if (target) target.cards.push(String(card));
+    else if (!WMStats.makeMatcher(settings, db)(card)) settings.tracking.cards.push({ name: String(card), since: '' });
   } else {
+    outOfGroups();
     settings.tracking.cards = settings.tracking.cards.filter((c) => !sameCard(c));
     if (WMStats.makeMatcher(settings, db)(card)) settings.tracking.excluded.push({ name: String(card) });
   }
-  await browser.storage.local.set({ settings });
+  await browser.storage.local.set({ settings: WMSettings.normalize(settings) });
   notifySiteTabs({ type: 'marketUpdated' });
-  return { ok: true, followed: !!WMStats.makeMatcher(settings, db)(card) };
+  const g = WMStats.groupOf(settings)(card);
+  return { ok: true, followed: !!WMStats.makeMatcher(settings, db)(card), group: g ? g.id : null };
+}
+
+/** Adds a search (seen on the Marché) to a group. */
+async function saveSearch(groupId, search) {
+  const settings = await getSettings();
+  const g = settings.groups.find((x) => x.id === groupId);
+  if (!g) throw new Error('Groupe introuvable.');
+  if (!search || typeof search.query !== 'string') throw new Error('Recherche invalide.');
+  if (g.searches.some((s) => s.query === search.query)) return { ok: true, already: true };
+  g.searches.push({ id: '', label: String(search.label || '').slice(0, 80), query: search.query, paged: !!search.paged, pageUrl: search.pageUrl || '', auto: false });
+  await browser.storage.local.set({ settings: WMSettings.normalize(settings) });
+  return { ok: true };
+}
+
+/** Shortcut of a saved search: the page where you ran it, in your game tab (or a new one). */
+async function openSearch(pageUrl) {
+  const url = /^https:\/\/(www\.)?wiki-masters\.com\//.test(String(pageUrl || '')) ? String(pageUrl) : MARKET_PAGE;
+  const tabs = await browser.tabs.query({ url: SITE_MATCH });
+  const tab = tabs.find((t) => /\/marketplace(\/|$|\?)/.test(t.url || '')) || tabs[0];
+  if (tab) {
+    await browser.tabs.update(tab.id, { active: true, url });
+    await browser.windows.update(tab.windowId, { focused: true });
+    return { ok: true, reused: true };
+  }
+  await browser.tabs.create({ url });
+  return { ok: true, reused: false };
 }
 
 async function clearBadge() {
@@ -455,6 +615,11 @@ async function setExcluded(id, excluded) {
   return { ok: true };
 }
 
+async function setBooster(id, booster) {
+  await withDb((db) => WMStore.setBooster(db, id, booster));
+  return { ok: true };
+}
+
 async function restoreBackup(backup) {
   const parsed = WMStore.readBackup(backup);
   await withDb((db) => {
@@ -470,7 +635,7 @@ async function resetData() {
     Object.keys(db).forEach((k) => delete db[k]);
     Object.assign(db, WMStore.emptyDb());
   });
-  await browser.storage.local.remove(['lastExport', 'exportState', 'lastResult', 'lastSync', 'syncState', 'resolver']);
+  await browser.storage.local.remove(['lastExport', 'exportState', 'lastResult', 'lastSync', 'syncState', 'resolver', 'autoSearch']);
   return { ok: true };
 }
 
@@ -575,4 +740,4 @@ async function importFromSheet() {
 }
 
 // For the Node tests.
-globalThis.__wmt = { ingest, onApiRequest, resolveTick, notifyDeals };
+globalThis.__wmt = { ingest, onApiRequest, resolveTick, searchTick, notifyDeals };

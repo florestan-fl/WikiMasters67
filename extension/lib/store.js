@@ -3,7 +3,8 @@
  * plain object so they can be tested with Node.
  *
  *   purchases / sales  { [auctionId]: record }   insert-only: a finished auction never changes
- *   overrides          { [id]: { excluded: true } }  your per-transaction exceptions
+ *   overrides          { [id]: { excluded: true, booster: true } }  your per-transaction exceptions
+ *                      (booster: a sale of a card opened in a booster, never bought)
  *   cards              { [cardKey]: { title, category, rarity } }
  *   auctions / marketSales   market observations (see market.js)
  *   listings           your active listings, as last seen
@@ -161,7 +162,7 @@
         var inc = String(r.inclure || '').trim().toLowerCase();
         if ((kind === 'purchases' && inc === 'non') || r.excluded === true) {
           if (!isExcluded(db, id)) res.excluded++;
-          db.overrides[id] = { excluded: true };
+          setExcluded(db, id, true);
         }
         if (kind === 'purchases' && inc === 'oui') oui[cardKey(r.card)] = r.card;
         if (map[id]) { res.skipped++; return; }
@@ -201,14 +202,24 @@
     return res;
   }
 
-  function setExcluded(db, id, excluded) {
+  function setOverride(db, id, field, on) {
     normalizeDb(db);
-    if (excluded) db.overrides[id] = { excluded: true };
-    else delete db.overrides[id];
+    var o = Object.assign({}, db.overrides[id] || {});
+    if (on) o[field] = true; else delete o[field];
+    if (Object.keys(o).length) db.overrides[id] = o; else delete db.overrides[id];
   }
+
+  function setExcluded(db, id, excluded) { setOverride(db, id, 'excluded', excluded); }
+
+  /** Tags a sale as a card opened in a booster (no purchase to match). */
+  function setBooster(db, id, booster) { setOverride(db, id, 'booster', booster); }
 
   function isExcluded(db, id) {
     return !!(db.overrides && db.overrides[id] && db.overrides[id].excluded);
+  }
+
+  function isBooster(db, id) {
+    return !!(db.overrides && db.overrides[id] && db.overrides[id].booster);
   }
 
   /** Newest purchase / sale times, for the "gap" warning. */
@@ -233,7 +244,7 @@
 
   var api = {
     emptyDb: emptyDb, normalizeDb: normalizeDb, mergeSync: mergeSync, importV1: importV1, addBalance: addBalance,
-    setExcluded: setExcluded, isExcluded: isExcluded, newestTimes: newestTimes, values: values,
+    setExcluded: setExcluded, isExcluded: isExcluded, setBooster: setBooster, isBooster: isBooster, newestTimes: newestTimes, values: values,
     makeBackup: makeBackup, readBackup: readBackup
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

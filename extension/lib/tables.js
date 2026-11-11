@@ -15,6 +15,10 @@
   function r2(x) { return Stats.round(x, 2); }
   function r3(x) { return Stats.round(x, 3); }
   function yesNo(b) { return b ? 'Oui' : 'Non'; }
+  function groupName(m, id) {
+    var g = (m.settings.groups || []).filter(function (x) { return x.id === id; })[0];
+    return g ? g.name : '';
+  }
 
   function dashboard(m) {
     var k = m.kpis;
@@ -37,6 +41,7 @@
       ['Taux de vente', k.sellRate === null ? '' : Math.round(k.sellRate * 1000) / 10 + ' %', ''],
       ['Marge moyenne sur les ventes', k.margin === null ? '' : Math.round(k.margin * 1000) / 10 + ' %', ''],
       ['Ventes sans achat correspondant', k.unmatched, ''],
+      ['Ventes de cartes de booster', k.boosterSales, 'Profit : ' + r0(k.boosterProfit) + ' W (coût attribué : ' + r0(m.settings.valuation.boosterCost) + ' W par carte)'],
       ['Dernier calcul', Time.formatDateTime(m.now), 'Généré par l\'extension WikiMasters → Google Sheets. Ne modifiez pas ces onglets : ils sont réécrits à chaque mise à jour.']
     ];
     return {
@@ -71,13 +76,13 @@
   function inventory(m) {
     return {
       name: 'Inventaire',
-      headers: ['Carte', 'Rareté', 'Quantité', 'Dont en vente', 'Coût FIFO total (W)', 'Coût moyen (W)', 'Valeur unitaire estimée (W)',
-        'Source de l\'estimation', 'Valeur totale estimée (W)', 'Plus-value latente (W)', 'Plus ancien achat', 'Détention moyenne (h)'],
+      headers: ['Carte', 'Groupe', 'Rareté', 'Quantité', 'Dont en vente', 'Coût FIFO total (W)', 'Coût moyen (W)', 'Valeur unitaire estimée (W)',
+        'Source de l\'estimation', 'Base de l\'estimation (W)', 'Valeur totale estimée (W)', 'Plus-value latente (W)', 'Plus ancien achat', 'Détention moyenne (h)'],
       rows: m.inventory.map(function (it) {
-        return [it.card, it.rarity, it.qty, it.listed, r0(it.cost), r0(it.avgCost), r0(it.unitValue), it.valueSource,
-          r0(it.value), r0(it.unrealized), it.oldest, r1(it.avgAge)];
+        return [it.card, groupName(m, it.group), it.rarity, it.qty, it.listed, r0(it.cost), r0(it.avgCost), r0(it.unitValue), it.valueSource,
+          it.valuation ? r0(it.valuation.base) : null, r0(it.value), r0(it.unrealized), it.oldest, r1(it.avgAge)];
       }),
-      formats: ['text', 'text', 'int', 'int', 'int', 'int', 'int', 'text', 'int', 'int', 'datetime', 'dec1'],
+      formats: ['text', 'text', 'text', 'int', 'int', 'int', 'int', 'int', 'text', 'int', 'int', 'int', 'datetime', 'dec1'],
       charts: [],
       freezeCols: 1
     };
@@ -86,20 +91,39 @@
   function perCard(m) {
     return {
       name: 'Par carte',
-      headers: ['Carte', 'Rareté', 'Achats', 'Prix achat moyen (W)', 'Coût total (W)', 'Mises en vente', 'Ventes', 'Taux de vente',
+      headers: ['Carte', 'Groupe', 'Rareté', 'Achats', 'Prix achat moyen (W)', 'Coût total (W)', 'Mises en vente', 'Ventes', 'Taux de vente',
         'Prix vente moyen (W)', 'Revenu net (W)', 'Coût FIFO des cartes vendues (W)', 'Profit réalisé (W)', 'Profit moyen / vente (W)',
         'Marge', 'En stock', 'Détention moyenne (h)', 'Prix d\'achat max conseillé (W)'],
       rows: m.cards.map(function (c) {
-        return [c.card, c.rarity, c.purchases, r0(c.avgBuy), r0(c.totalCost), c.listings, c.sold, r3(c.sellRate), r0(c.avgSell),
+        return [c.card, groupName(m, c.group), c.rarity, c.purchases, r0(c.avgBuy), r0(c.totalCost), c.listings, c.sold, r3(c.sellRate), r0(c.avgSell),
           r0(c.revenue), r0(c.cogs), r0(c.profit), r0(c.avgProfit), r3(c.margin), c.stock, r1(c.avgHold), r0(c.maxBuy)];
       }),
-      formats: ['text', 'text', 'int', 'int', 'int', 'int', 'int', 'pct', 'int', 'int', 'int', 'int', 'int', 'pct', 'int', 'dec1', 'int'],
+      formats: ['text', 'text', 'text', 'int', 'int', 'int', 'int', 'int', 'pct', 'int', 'int', 'int', 'int', 'int', 'pct', 'int', 'dec1', 'int'],
       charts: [
-        { type: 'COLUMN', title: 'Profit réalisé par carte (W)', domain: 0, series: [11], legend: 'none' },
-        { type: 'COLUMN', title: 'Prix moyen d\'achat et de vente par carte (W)', domain: 0, series: [3, 8], legend: 'bottom' },
-        { type: 'COLUMN', title: 'Profit moyen réalisé par carte (W)', domain: 0, series: [12], legend: 'none' },
-        { type: 'COLUMN', title: 'Marge', domain: 0, series: [13], legend: 'none' }
+        { type: 'COLUMN', title: 'Profit réalisé par carte (W)', domain: 0, series: [12], legend: 'none' },
+        { type: 'COLUMN', title: 'Prix moyen d\'achat et de vente par carte (W)', domain: 0, series: [4, 9], legend: 'bottom' },
+        { type: 'COLUMN', title: 'Profit moyen réalisé par carte (W)', domain: 0, series: [13], legend: 'none' },
+        { type: 'COLUMN', title: 'Marge', domain: 0, series: [14], legend: 'none' }
       ],
+      freezeCols: 1
+    };
+  }
+
+  function perGroup(m) {
+    var list = Stats.summarizeGroups(m);
+    return {
+      name: 'Par groupe',
+      headers: ['Groupe', 'Cartes', 'Achats', 'Dépensé (W)', 'Ventes', 'Dont boosters', 'Revenu net (W)', 'Profit réalisé (W)',
+        'Profit réalisé 7 j (W)', 'Profit réalisé 30 j (W)', 'Cartes en stock', 'Coût du stock (W)', 'Valeur estimée du stock (W)', 'Plus-value latente (W)'],
+      rows: list.map(function (g) {
+        return [g.name, g.cards, g.purchases, r0(g.spent), g.sold, g.boosterSales, r0(g.revenue), r0(g.realized), r0(g.realized7),
+          r0(g.realized30), g.stockQty, r0(g.stockCost), r0(g.stockValue), r0(g.unrealized)];
+      }),
+      formats: ['text', 'int', 'int', 'int', 'int', 'int', 'int', 'int', 'int', 'int', 'int', 'int', 'int', 'int'],
+      charts: list.length ? [
+        { type: 'COLUMN', title: 'Profit réalisé par groupe (W)', domain: 0, series: [7, 9], legend: 'bottom' },
+        { type: 'COLUMN', title: 'Stock par groupe : coût et valeur estimée (W)', domain: 0, series: [11, 12], legend: 'bottom' }
+      ] : [],
       freezeCols: 1
     };
   }
@@ -176,13 +200,13 @@
   function purchasesTable(m) {
     return {
       name: 'Achats',
-      headers: ['ID', 'Date/heure', 'Carte', 'Rareté', 'Prix (W)', 'Vendeur', 'Suivie', 'Exclue', 'N° achat de la carte',
+      headers: ['ID', 'Date/heure', 'Carte', 'Groupe', 'Rareté', 'Prix (W)', 'Vendeur', 'Suivie', 'Exclue', 'N° achat de la carte',
         'Indice prix', 'Vendue par (FIFO)', 'Vendue le', 'ID site'],
       rows: m.purchases.map(function (r) {
-        return [r.label, r.time, r.card, r.rarity, r.price, r.party, yesNo(r.tracked), yesNo(r.excluded), r.tracked ? r.n : null,
+        return [r.label, r.time, r.card, groupName(m, r.group), r.rarity, r.price, r.party, yesNo(r.tracked), yesNo(r.excluded), r.tracked ? r.n : null,
           r.tracked ? r2(r.index) : null, r.soldBy || '', r.soldAt, /^v1:/.test(r.id) ? '' : r.id];
       }),
-      formats: ['text', 'datetime', 'text', 'text', 'int', 'text', 'text', 'text', 'int', 'dec2', 'text', 'datetime', 'text'],
+      formats: ['text', 'datetime', 'text', 'text', 'text', 'int', 'text', 'text', 'text', 'int', 'dec2', 'text', 'datetime', 'text'],
       charts: [],
       filter: true,
       freezeCols: 1
@@ -192,13 +216,13 @@
   function salesTable(m) {
     return {
       name: 'Ventes',
-      headers: ['ID', 'Date/heure', 'Carte', 'Rareté', 'Prix (W)', 'Statut', 'Acheteur', 'Suivie', 'Exclue', 'ID achat (FIFO)',
+      headers: ['ID', 'Date/heure', 'Carte', 'Groupe', 'Rareté', 'Prix (W)', 'Statut', 'Acheteur', 'Suivie', 'Exclue', 'Booster', 'ID achat (FIFO)',
         'Prix d\'achat (W)', 'Revenu net (W)', 'Profit (W)', 'Marge', 'Détention (h)', 'Indice prix', 'Contrôle', 'ID site'],
       rows: m.sales.map(function (r) {
-        return [r.label, r.time, r.card, r.rarity, r.price, r.status, r.party, yesNo(r.tracked), yesNo(r.excluded), r.lot || '',
-          r0(r.cost), r0(r.net), r0(r.profit), r3(r.margin), r1(r.hold), r2(r.index), r.check, /^v1:/.test(r.id) ? '' : r.id];
+        return [r.label, r.time, r.card, groupName(m, r.group), r.rarity, r.price, r.status, r.party, yesNo(r.tracked), yesNo(r.excluded), yesNo(r.booster),
+          r.lot || '', r0(r.cost), r0(r.net), r0(r.profit), r3(r.margin), r1(r.hold), r2(r.index), r.check, /^v1:/.test(r.id) ? '' : r.id];
       }),
-      formats: ['text', 'datetime', 'text', 'text', 'int', 'text', 'text', 'text', 'text', 'text', 'int', 'int', 'int', 'pct',
+      formats: ['text', 'datetime', 'text', 'text', 'text', 'int', 'text', 'text', 'text', 'text', 'text', 'text', 'int', 'int', 'int', 'pct',
         'dec1', 'dec2', 'text', 'text'],
       charts: [],
       filter: true,
@@ -208,7 +232,7 @@
 
   /** All tables, in tab order. */
   function build(m) {
-    return [dashboard(m), perDay(m), inventory(m), perCard(m), marketPrices(m), perHour(m), inflation(m), pricesOverTime(m),
+    return [dashboard(m), perDay(m), perGroup(m), inventory(m), perCard(m), marketPrices(m), perHour(m), inflation(m), pricesOverTime(m),
       purchasesTable(m), salesTable(m)];
   }
 

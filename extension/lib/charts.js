@@ -140,7 +140,8 @@
 
     var t = theme();
     var datasets = opts.datasets.map(function (d, i) {
-      var color = t.series[(d.slot === undefined ? i : d.slot) % t.series.length];
+      // d.color: a colour chosen by the player (group colours); otherwise the palette slot.
+      var color = d.color || t.series[(d.slot === undefined ? i : d.slot) % t.series.length];
       var base = { label: d.label, data: d.data };
       if (opts.type === 'bar') {
         return Object.assign(base, {

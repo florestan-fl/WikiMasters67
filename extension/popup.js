@@ -1,4 +1,4 @@
-/* global browser, WMStore, WMMarket, WMStats, WMSettings, WMTime, WMFormat */
+/* global browser, WMStore, WMMarket, WMStats, WMSettings, WMTime, WMFormat, WMSearches, WMExtract */
 'use strict';
 
 const ORIGINS = [
@@ -145,9 +145,13 @@ async function render() {
   const notices = $('notices');
   notices.textContent = '';
   if (meta.warning && Date.now() - meta.warning.t < 3 * 86400000) notices.append(F.el('div', { class: 'notice warn', text: meta.warning.text }));
-  if (!settings.tracking.cards.length && !settings.tracking.categories.length) {
-    notices.append(F.el('div', { class: 'notice warn', text: "Aucune carte suivie : choisissez vos cartes dans les paramètres, ou cliquez « + Suivre » sous une enchère sur le site." }));
+  if (!settings.tracking.cards.length && !settings.tracking.categories.length && !settings.groups.some((g) => g.cards.length)) {
+    notices.append(F.el('div', { class: 'notice warn', text: "Aucune carte suivie : créez un groupe (Tableau de bord → Groupes) ou choisissez vos cartes dans les paramètres, ou cliquez « + Suivre » sous une enchère sur le site." }));
   }
+
+  // Groups not searched for a while, and the last search to save.
+  renderGroupsDue(db, settings);
+  renderLastSearch(db, settings);
 
   // Deals in progress (passive: auctions seen while browsing).
   renderDeals(db, settings);
@@ -165,6 +169,48 @@ async function render() {
         { label: 'Prix', value: (r) => r.price, format: F.w, num: true }
       ], recent, { maxHeight: '170px' }));
   }
+}
+
+function groupDot(g) {
+  return F.el('span', { class: 'g-dot', style: `--g:${g.color}`, title: g.name, 'aria-hidden': 'true' });
+}
+
+function renderGroupsDue(db, settings) {
+  const box = $('groups-due');
+  box.textContent = '';
+  const due = settings.groups.map((g) => ({ g, act: WMSearches.activity(db, g, Date.now(), WMExtract.cardKey) })).filter((x) => x.act.overdue);
+  if (!due.length) return;
+  box.append(F.el('div', { class: 'head' }, F.el('span', { text: 'Groupes à regarder' }), F.el('span', { class: 'small secondary', text: 'pas de recherche récente' })));
+  box.append(F.el('ul', null, due.map(({ g, act }) => F.el('li', null,
+    F.el('div', { class: 'line' }, groupDot(g), F.el('b', { text: g.name }),
+      F.el('span', { class: 'small secondary', text: act.last ? `dernière recherche ${ago(act.last)}` : 'jamais recherché' })),
+    F.el('div', { class: 'shortcuts' }, g.searches.slice(0, 4).map((x) => F.el('button', {
+      class: 'small', title: WMSearches.describe(x.query), text: `↗ ${x.label || WMSearches.describe(x.query)}`,
+      onclick: go({ type: 'openSearch', pageUrl: x.pageUrl })
+    })))))));
+}
+
+/** The last search made on the Marché, if not saved in a group yet: one click to save it. */
+function renderLastSearch(db, settings) {
+  const box = $('last-search');
+  box.textContent = '';
+  const log = db.meta.searchLog || [];
+  const last = log[log.length - 1];
+  if (!settings.groups.length || !last || Date.now() - last.at > 6 * 3600e3) return;
+  if (settings.groups.some((g) => g.searches.some((x) => x.query === last.query))) return;
+  // Suggest the group that holds most of the cards found.
+  const groupOf = WMStats.groupOf(settings);
+  const votes = {};
+  (last.cards || []).forEach((c) => { const g = groupOf(c); if (g) votes[g.id] = (votes[g.id] || 0) + 1; });
+  const best = Object.keys(votes).sort((a, b) => votes[b] - votes[a])[0] || settings.groups[0].id;
+  const sel = F.el('select', { 'aria-label': 'Groupe' }, settings.groups.map((g) => F.el('option', { value: g.id, text: g.name, selected: g.id === best })));
+  const btn = F.el('button', { class: 'small', text: 'Enregistrer', onclick: async () => {
+    btn.disabled = true;
+    await browser.runtime.sendMessage({ type: 'saveSearch', group: sel.value, search: last });
+  } });
+  box.append(F.el('div', { class: 'small secondary', text: `Dernière recherche sur le Marché (${ago(last.at)}, ${last.results} annonce(s)) :` }),
+    F.el('div', { class: 'params', text: WMSearches.describe(last.query) }),
+    F.el('div', { class: 'save' }, F.el('span', { class: 'small', text: 'Ajouter à' }), sel, btn));
 }
 
 let dealTimer = null;
@@ -191,7 +237,9 @@ function renderDeals(db, settings) {
     return;
   }
   const timers = [];
+  const groupOf = WMStats.groupOf(settings);
   box.append(F.el('ul', null, list.slice(0, 30).map((d) => {
+    const g = groupOf(d.card);
     const left = F.el('span', { class: 'left', text: countdown(d.end - Date.now()) });
     timers.push([left, d.end]);
     return F.el('li', null, F.el('a', {
@@ -199,7 +247,7 @@ function renderDeals(db, settings) {
       title: 'Ouvrir l\'enchère'
     },
     F.el('span', null,
-      F.el('div', { class: 'card-name', text: `${d.card}${d.rarity ? ` · ${d.rarity}` : ''}` }),
+      F.el('div', { class: 'card-name' }, g ? groupDot(g) : null, `${d.card}${d.rarity ? ` · ${d.rarity}` : ''}`),
       F.el('div', { class: 'sub', text: `${d.hasBid ? 'Prochaine mise' : 'Mise de départ'} ${F.w(d.next)} · méd. ${F.w(d.median)} · vu ${ago(d.seenAt)}` })),
     F.el('span', { class: 'pill', text: `${Math.round(d.diff * 100)} %` }),
     left));

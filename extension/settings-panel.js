@@ -26,7 +26,7 @@ function renderAll() {
   renderCategories();
   renderExcluded();
   const v = settings.valuation;
-  ['windowDays', 'sampleSize', 'haircutPct', 'commissionPct', 'targetMarginPct'].forEach((k) => { $(k).value = v[k]; });
+  ['windowDays', 'sampleSize', 'haircutPct', 'commissionPct', 'targetMarginPct', 'boosterCost'].forEach((k) => { $(k).value = v[k]; });
   $('unmatched').value = v.unmatched;
   $('overlay').checked = settings.market.overlay;
   $('dealPct').value = settings.market.dealPct;
@@ -42,6 +42,10 @@ function renderAll() {
   $('alertMinSales').value = ft.alertMinSales;
   $('alertScope').value = ft.alertScope;
   renderDealsStatus();
+  $('autoSearch').checked = ft.autoSearch;
+  $('autoSearchMin').value = ft.autoSearchMin;
+  $('autoSearchMaxPerDay').value = ft.autoSearchMaxPerDay;
+  renderAutoSearchStatus();
   $('autoResolve').checked = settings.market.autoResolve;
   $('resolveSpacingSec').value = settings.market.resolveSpacingSec;
   $('resolveMaxPerDay').value = settings.market.resolveMaxPerDay;
@@ -140,7 +144,7 @@ function renderSummary() {
   const cards = m.cards.filter((c) => c.purchases + c.listings > 0).map((c) => c.card);
   const box = $('match-summary');
   box.textContent = '';
-  if (!s.tracking.cards.length && !s.tracking.categories.length) {
+  if (!s.tracking.cards.length && !s.tracking.categories.length && !s.groups.some((g) => g.cards.length)) {
     box.textContent = 'Aucune règle : rien n\'est suivi pour l\'instant.';
     return;
   }
@@ -168,7 +172,7 @@ $('add-category').addEventListener('click', () => {
 
 function readForm() {
   const v = settings.valuation;
-  ['windowDays', 'sampleSize', 'haircutPct', 'commissionPct', 'targetMarginPct'].forEach((k) => { v[k] = $(k).value; });
+  ['windowDays', 'sampleSize', 'haircutPct', 'commissionPct', 'targetMarginPct', 'boosterCost'].forEach((k) => { v[k] = $(k).value; });
   v.unmatched = $('unmatched').value;
   settings.market.overlay = $('overlay').checked;
   settings.market.dealPct = $('dealPct').value;
@@ -183,6 +187,9 @@ function readForm() {
   ft.alertPct = $('alertPct').value;
   ft.alertMinSales = $('alertMinSales').value;
   ft.alertScope = $('alertScope').value;
+  ft.autoSearch = $('autoSearch').checked;
+  ft.autoSearchMin = $('autoSearchMin').value;
+  ft.autoSearchMaxPerDay = $('autoSearchMaxPerDay').value;
   settings.market.autoResolve = $('autoResolve').checked;
   settings.market.resolveSpacingSec = $('resolveSpacingSec').value;
   settings.market.resolveMaxPerDay = $('resolveMaxPerDay').value;
@@ -200,14 +207,18 @@ async function save() {
   readForm();
   // Keep empty rows on screen while typing, but store only meaningful ones.
   const toStore = WMSettings.normalize(settings);
+  // Groups are edited in the Groupes tab and from the site: keep what is stored.
+  const stored = WMSettings.normalize((await browser.storage.local.get('settings')).settings);
+  toStore.groups = stored.groups;
+  settings.groups = stored.groups;
   await browser.storage.local.set({ settings: toStore });
   renderDealsStatus();
   $('saved').textContent = `Enregistré à ${new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`;
 }
 
-['windowDays', 'sampleSize', 'haircutPct', 'commissionPct', 'targetMarginPct', 'unmatched', 'overlay', 'dealPct', 'mWindowDays',
+['windowDays', 'sampleSize', 'haircutPct', 'commissionPct', 'targetMarginPct', 'boosterCost', 'unmatched', 'overlay', 'dealPct', 'mWindowDays',
   'useEstimates', 'resolveSpacingSec', 'resolveMaxPerDay', 'scriptUrl', 'secret', 'autoExport',
-  'fullArt', 'fullArtWide', 'deals', 'alertPct', 'alertMinSales', 'alertScope']
+  'fullArt', 'fullArtWide', 'deals', 'alertPct', 'alertMinSales', 'alertScope', 'autoSearchMin', 'autoSearchMaxPerDay']
   .forEach((id) => {
     $(id).addEventListener('input', () => scheduleSave());
     $(id).addEventListener('change', () => { scheduleSave(); renderSummary(); });
@@ -245,6 +256,38 @@ function renderDealsStatus() {
     useEstimates: s.market.useEstimates, isEligible: s.features.alertScope === 'all' ? null : (c) => !!match(c)
   });
   box.textContent = `${list.length} bonne(s) affaire(s) en cours avec ces réglages, parmi les enchères vues ces 2 dernières heures.`;
+}
+
+/* --------------------------------------------------- automated searches */
+
+// Needs the optional "scripting" permission (as the resolver), asked on this click.
+$('autoSearch').addEventListener('change', async (e) => {
+  if (e.target.checked) {
+    let granted = false;
+    try { granted = await browser.permissions.request({ permissions: ['scripting'] }); } catch (err) { granted = false; }
+    if (!granted) e.target.checked = false;
+  }
+  scheduleSave(true);
+  renderAutoSearchStatus();
+});
+
+async function renderAutoSearchStatus() {
+  const box = $('autosearch-status');
+  if (!box) return;
+  const { autoSearch } = await browser.storage.local.get('autoSearch');
+  const s = WMSettings.normalize(settings);
+  const auto = [];
+  s.groups.forEach((g) => g.searches.forEach((x) => { if (x.auto && !auto.includes(x.query)) auto.push(x.query); }));
+  const parts = [auto.length
+    ? `${auto.length} recherche(s) cochée(s) « Auto » dans vos groupes.`
+    : 'Aucune recherche cochée « Auto » : enregistrez des recherches dans l\'onglet Groupes et cochez « Auto ».'];
+  if ($('autoSearch').checked && autoSearch && autoSearch.day === WMTime.dayKey(Date.now())) {
+    parts.push(`Aujourd'hui : ${autoSearch.count} requête(s) sur ${s.features.autoSearchMaxPerDay}.`);
+  }
+  if ($('autoSearch').checked && autoSearch && autoSearch.lastAt) {
+    parts.push(`Dernière : ${WMTime.formatDateTime(autoSearch.lastAt)}${autoSearch.lastLabel ? ` (${autoSearch.lastGroup} · ${autoSearch.lastLabel}, ${autoSearch.lastFound || 0} annonce(s))` : ''}.`);
+  }
+  box.textContent = parts.join(' ');
 }
 
 /* ------------------------------------------------------- final prices */
@@ -380,6 +423,7 @@ browser.storage.onChanged.addListener((changes, area) => {
     renderDealsStatus();
   }
   if (changes.resolver) renderResolverStatus();
+  if (changes.autoSearch) renderAutoSearchStatus();
   // Card followed from the site ("+ Suivre") while this tab is open.
   if (changes.settings && !document.activeElement.closest('#tab-settings, #tab-features')) {
     settings = WMSettings.normalize(changes.settings.newValue);

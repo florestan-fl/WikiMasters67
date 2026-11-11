@@ -77,3 +77,17 @@ header button.link:hover { color: var(--fg); }
 #deals .sub { font-size: 12px; color: var(--fg-2); }
 #deals .pill { border-radius: 999px; padding: 1px 8px; font-weight: 600; font-size: 12px; background: rgba(12, 163, 12, 0.15); color: var(--good-text); }
 #deals .left { text-align: right; font-variant-numeric: tabular-nums; font-size: 12px; color: var(--fg-2); }
+
+.g-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--g); margin-right: 6px; vertical-align: 1px; }
+#groups-due, #last-search { margin-top: 12px; }
+#groups-due .head { display: flex; justify-content: space-between; align-items: baseline; font-weight: 600; margin-bottom: 4px; }
+#groups-due ul { list-style: none; margin: 0; padding: 0; }
+#groups-due li { border-top: 1px solid var(--border); padding: 6px 2px; }
+#groups-due .line { display: flex; align-items: center; gap: 2px; }
+#groups-due .line .small { margin-left: auto; }
+#groups-due .shortcuts { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+#groups-due .shortcuts button, #last-search button { padding: 2px 8px; }
+#last-search { border: 1px dashed var(--border-strong); border-radius: 10px; padding: 8px 10px; }
+#last-search .params { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; margin: 3px 0 6px; word-break: break-all; }
+#last-search .save { display: flex; gap: 6px; align-items: center; }
+#last-search select { flex: 1; min-width: 0; }

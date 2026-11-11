@@ -15,6 +15,7 @@ const Store = require('../extension/lib/store');
 const Stats = require('../extension/lib/stats');
 const Tables = require('../extension/lib/tables');
 const Market = require('../extension/lib/market');
+const Searches = require('../extension/lib/searches');
 
 let passed = 0;
 function test(name, fn) {
@@ -458,13 +459,102 @@ test('stats: inflation is the average purchase price per day, on a time axis', (
   assert.deepStrictEqual([t.headers[0], t.formats[0], t.charts[0].interpolate], ['Jour', 'date', true]);
 });
 
+/* ---------------------------------------------------- groups, boosters */
+
+test('groups: group cards are followed; one group per card; stats per group', () => {
+  const { db, now } = scenario();
+  const settings = Settings.normalize({
+    tracking: { cards: [{ name: 'Triceratops', since: '' }], categories: [] },
+    groups: [{ id: 'dino', name: 'Dinosaures', cards: ['Triceratops'] }, { id: 'pays', name: 'Pays', color: '#123456', cards: ['norvege', 'Triceratops'] }]
+  });
+  assert.deepStrictEqual(settings.groups.map((g) => [g.id, g.cards, g.color]), [['dino', ['Triceratops'], '#2a78d6'], ['pays', ['norvege'], '#123456']],
+    'a card stays in its first group; automatic colour from the palette');
+  const all = Stats.compute(db, settings, now);
+  assert.strictEqual(all.sales.find((x) => x.id === 's3').tracked, true, 'Norvège is followed through its group');
+  assert.deepStrictEqual([all.kpis.realizedTotal, all.sales.find((x) => x.id === 's3').group], [550, 'pays'], '200 (Triceratops) + 350 (Norvège)');
+  const dino = Stats.compute(db, settings, now, { group: 'dino' });
+  assert.deepStrictEqual(dino.cards.map((c) => c.card), ['Triceratops']);
+  assert.strictEqual(dino.sales.find((x) => x.id === 's3').tracked, false, 'other groups are left out');
+  const none = Stats.compute(db, settings, now, { group: '' });
+  assert.deepStrictEqual(none.kpis.trackedPurchases, 0, 'every followed card is in a group');
+  const sum = Stats.summarizeGroups(all);
+  assert.deepStrictEqual(sum.map((g) => [g.name, g.cards, g.purchases, g.sold, Math.round(g.realized), g.stockQty]),
+    [['Dinosaures', 1, 2, 1, 200, 1], ['Pays', 1, 1, 1, 350, 0]]);
+  assert.strictEqual(Stats.groupOf(settings)('NORVÈGE').name, 'Pays');
+});
+
+test('booster: a tagged sale costs the booster cost and consumes no purchase', () => {
+  const { db, now } = scenario();
+  Store.setBooster(db, 's1', true);
+  Store.setExcluded(db, 's1', true);
+  Store.setExcluded(db, 's1', false);
+  assert.deepStrictEqual(db.overrides.s1, { booster: true }, 'both tags live side by side');
+  const m = Stats.compute(db, settingsWith(['Triceratops'], { valuation: { boosterCost: 50 } }), now);
+  const s1 = m.sales.find((x) => x.id === 's1');
+  assert.deepStrictEqual([s1.booster, s1.check, s1.cost, s1.profit, s1.lot], [true, 'Booster', 50, 250, null]);
+  assert.deepStrictEqual(m.inventory.map((i) => [i.card, i.qty, i.cost]), [['Triceratops', 2, 300]], 'both purchases still in stock');
+  assert.deepStrictEqual([m.kpis.boosterSales, m.kpis.boosterProfit, m.kpis.unmatched], [1, 250, 0]);
+  Store.setBooster(db, 's1', false);
+  assert.strictEqual(db.overrides.s1, undefined);
+});
+
+test('stock: valuation detail (method, sales used, listing used, cost)', () => {
+  const { db, now, T } = scenario();
+  const settings = settingsWith(['Triceratops', 'Norvège'], { valuation: { commissionPct: 10, haircutPct: 0 } });
+  // Norvège: unsold copy, only a listing seen -> valued at the cheapest next bid.
+  Store.mergeSync(db, { purchases: [{ id: 'p4', time: T(2, 12), card: 'Norvège', rarity: 'L', price: 1500, party: 'd' }] });
+  Market.ingest(db, { auctions: [{ id: 'n1', status: 'active', seller_id: 'other', card: { wikipedia_title: 'Norvège' }, current_bid: 1000,
+    effective_bid: 1000, base_amount: 900, end_at: new Date(now + 3600e3).toISOString() }] }, now - 60e3, 'me');
+  const m = Stats.compute(db, settings, now);
+  const tri = m.inventory.find((i) => i.card === 'Triceratops');
+  assert.strictEqual(tri.valuation.method, 'recent');
+  assert.deepStrictEqual(tri.valuation.samples.map((x) => [x.price, x.kind]), [[300, 'own']]);
+  assert.deepStrictEqual([tri.valuation.base, tri.unitValue], [300, 270], 'median × (1 − 10 % commission)');
+  const nor = m.inventory.find((i) => i.card === 'Norvège');
+  assert.strictEqual(nor.valuation.method, 'recent', 'the own sale of Norvège (1950) is recent');
+  // Without the sale: the listing.
+  delete db.sales.s3;
+  const m2 = Stats.compute(db, settings, now);
+  const nor2 = m2.inventory.find((i) => i.card === 'Norvège');
+  assert.deepStrictEqual([nor2.valuation.method, nor2.valuation.base, nor2.valuation.ask.id, nor2.valuation.ask.hasBid], ['asks', 1100, 'n1', true]);
+  // Nothing at all: the purchase cost.
+  db.auctions = {};
+  const nor3 = Stats.compute(db, settings, now).inventory.find((i) => i.card === 'Norvège');
+  assert.deepStrictEqual([nor3.valuation.method, nor3.unitValue], ['cost', 1550], 'average cost of the 2 copies');
+});
+
+test('searches: the game\'s own parameters, without the page; own lists ignored', () => {
+  const a = Searches.parse('https://www.wiki-masters.com/api/marketplace?sort=price_asc&search=Tric%C3%A9ratops&page=2&rarity=SR&limit=50');
+  assert.deepStrictEqual([a.query, a.paged], ['limit=50&rarity=SR&search=Tric%C3%A9ratops&sort=price_asc', true]);
+  assert.strictEqual(Searches.parse('https://www.wiki-masters.com/api/marketplace?search=Tric%C3%A9ratops&rarity=SR&sort=price_asc&limit=50&page=1').query, a.query,
+    'same search, other page or order: same key');
+  assert.strictEqual(Searches.parse('https://www.wiki-masters.com/api/marketplace?page=1&limit=50&sort=recent&mine=1'), null);
+  assert.strictEqual(Searches.parse('https://www.wiki-masters.com/api/marketplace/abc'), null);
+  assert.strictEqual(Searches.parse('https://example.com/api/marketplace?x=1'), null);
+  assert.strictEqual(Searches.describe(a.query), 'rarity : SR · search : Tricératops · sort : price_asc');
+  assert.strictEqual(Searches.apiUrl('https://www.wiki-masters.com', a), 'https://www.wiki-masters.com/api/marketplace?' + a.query + '&page=1');
+
+  const db = Store.emptyDb();
+  Searches.record(db, { query: a.query, paged: true, pageUrl: 'https://www.wiki-masters.com/marketplace?q=x', at: 1000, results: 3, cards: ['Triceratops'] });
+  Searches.record(db, { query: a.query, paged: true, pageUrl: '', at: 2000, results: 3, cards: ['Triceratops'] });
+  Searches.record(db, { query: a.query, paged: true, at: 3000, results: 3, cards: [], auto: true });
+  assert.strictEqual(db.meta.searchLog.length, 1);
+  assert.strictEqual(db.meta.searchLog[0].pageUrl, 'https://www.wiki-masters.com/marketplace?q=x', 'page of the first run kept');
+  assert.deepStrictEqual(Searches.lastUse(db, a.query), { user: 2000, auto: 3000 });
+
+  const group = { cards: ['Triceratops'], searches: [{ query: a.query }], remindDays: 2 };
+  db.auctions = { x: { baseKey: 'triceratops', seenAt: 2500, mine: false } };
+  const act = Searches.activity(db, group, 3000 + 3 * 86400e3, Extract.cardKey);
+  assert.deepStrictEqual([act.user, act.auto, act.seen, act.last, act.overdue], [2000, 3000, 2500, 3000, true]);
+});
+
 /* ---------------------------------------------------------------- tables */
 
 test('tables: every row matches its headers; CSV for French Excel', () => {
   const { db, now } = scenario();
   const m = Stats.compute(db, settingsWith(['Triceratops']), now);
   const tables = Tables.build(m);
-  assert.deepStrictEqual(tables.map((t) => t.name), ['Tableau de bord', 'Par jour', 'Inventaire', 'Par carte', 'Prix du marché',
+  assert.deepStrictEqual(tables.map((t) => t.name), ['Tableau de bord', 'Par jour', 'Par groupe', 'Inventaire', 'Par carte', 'Prix du marché',
     'Par heure', 'Inflation', 'Prix dans le temps', 'Achats', 'Ventes']);
   tables.forEach((t) => {
     assert.strictEqual(t.formats.length, t.headers.length, `${t.name} formats`);
@@ -472,8 +562,8 @@ test('tables: every row matches its headers; CSV for French Excel', () => {
     t.charts.forEach((c) => c.series.concat([c.domain]).forEach((i) => assert.ok(i < t.headers.length, `${t.name} chart column`)));
   });
   const csv = Tables.toCsv(tables.find((t) => t.name === 'Ventes'));
-  assert.ok(csv.startsWith('﻿ID;Date/heure;Carte'));
-  assert.ok(csv.includes('V01;02/11/2026 18:00;Triceratops;SR;300;Vendue;x;Oui;Non;A01;100;300;200;2;32;'));
+  assert.ok(csv.startsWith('﻿ID;Date/heure;Carte;Groupe'));
+  assert.ok(csv.includes('V01;02/11/2026 18:00;Triceratops;;SR;300;Vendue;x;Oui;Non;Non;A01;100;300;200;2;32;'), csv);
 });
 
 /* ----------------------------------------------------------- Apps Script */
@@ -540,7 +630,7 @@ test('apps script: write creates the template, archives v1 tabs, then reuses its
   assert.strictEqual(res.ok, true, res.error);
   assert.deepStrictEqual(res.warnings.filter((w) => !/conservé/.test(w)), []);
   const names = ss.getSheets().map((s) => s.getName());
-  assert.deepStrictEqual(names.slice(0, 10), ['Tableau de bord', 'Par jour', 'Inventaire', 'Par carte', 'Prix du marché', 'Par heure',
+  assert.deepStrictEqual(names.slice(0, 11), ['Tableau de bord', 'Par jour', 'Par groupe', 'Inventaire', 'Par carte', 'Prix du marché', 'Par heure',
     'Inflation', 'Prix dans le temps', 'Achats', 'Ventes']);
   assert.ok(names.includes('Achats (v1)') && names.includes('Ventes (v1)') && names.includes('Par heure (v1)') && names.includes('Par espèce'));
 
@@ -554,7 +644,7 @@ test('apps script: write creates the template, archives v1 tabs, then reuses its
   assert.strictEqual(ss.getSheetByName('Par carte').getCharts().length, 4);
   assert.strictEqual(ss.getSheetByName('Par jour').getCharts().length, 3);
   const chart = ss.getSheetByName('Par carte').getCharts()[1];
-  assert.deepStrictEqual(chart.ranges.map((r) => r[1]), [1, 4, 9], 'domain + avg buy + avg sell columns');
+  assert.deepStrictEqual(chart.ranges.map((r) => r[1]), [1, 5, 10], 'domain + avg buy + avg sell columns');
 
   // Second write: same tabs, no new archive, charts replaced not duplicated.
   const res2 = call({ action: 'write', tables });
@@ -574,7 +664,7 @@ test('apps script: write on an empty spreadsheet (template for new players)', ()
   const m = Stats.compute(Store.emptyDb(), Settings.normalize({}), Date.now());
   const res = call({ action: 'write', tables: JSON.parse(JSON.stringify(Tables.build(m))) });
   assert.strictEqual(res.ok, true, res.error);
-  assert.strictEqual(ss.getSheets().length, 11);
+  assert.strictEqual(ss.getSheets().length, 12);
   assert.strictEqual(ss.getSheetByName('Achats').cell(1, 3).v, 'Carte');
 });
 

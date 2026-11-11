@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "WikiMasters Trading",
-  "version": "3.3.3",
+  "version": "3.4.0",
   "description": "Suivez vos achats et ventes sur le marché WikiMasters et les prix du marché : profit par jour, stock, statistiques, export Google Sheets. Lecture passive des pages du jeu ; relevé automatique des prix finaux en option.",
   "browser_specific_settings": {
     "gecko": {
@@ -21,7 +21,8 @@
     "https://script.googleusercontent.com/*"
   ],
   "background": {
-    "scripts": ["lib/extract.js", "lib/time.js", "lib/settings.js", "lib/store.js", "lib/market.js", "lib/stats.js", "lib/tables.js", "background.js"]
+    "scripts": ["lib/extract.js", "lib/time.js", "lib/settings.js", "lib/store.js", "lib/market.js",
+      "lib/searches.js", "lib/stats.js", "lib/tables.js", "background.js"]
   },
   "content_scripts": [
     {

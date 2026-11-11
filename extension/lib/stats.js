@@ -4,8 +4,11 @@
  * recomputed, history included.
  *
  *  - A transaction counts ("suivie") when its card matches a tracking rule
- *    (card name, or keyword in the card's Wikipedia description), it is not
- *    older than the rule's "since" date, and it is not excluded.
+ *    (card name, card of one of your groups, or keyword in the card's
+ *    Wikipedia description), it is not older than the rule's "since" date,
+ *    and it is not excluded.
+ *  - A sale tagged "Booster" (card opened in a booster, never bought) costs
+ *    the booster cost set in the settings and consumes no purchase.
  *  - Sold listings consume tracked purchases of the same card, oldest first
  *    (FIFO), never a purchase made after the sale.
  *  - Stock = tracked purchases not consumed yet. Its value is estimated per
@@ -32,6 +35,7 @@
     old: 'ventes anciennes',
     cost: "coût d'achat"
   };
+  var METHOD = { 'ventes récentes': 'recent', 'annonces en cours': 'asks', 'ventes anciennes': 'old', "coût d'achat": 'cost' };
 
   function byTime(a, b) { return a.time - b.time || (a.label < b.label ? -1 : a.label > b.label ? 1 : 0); }
 
@@ -53,18 +57,43 @@
     return Math.round(x * f) / f;
   }
 
-  /** Returns card -> rule ({ since } or null). */
-  function makeMatcher(settings, db) {
+  /** card key -> its group ({ id, name, color, … }). */
+  function groupIndex(settings) {
+    var idx = {};
+    (settings.groups || []).forEach(function (g) {
+      g.cards.forEach(function (name) { var k = cardKey(name); if (!idx[k]) idx[k] = g; });
+    });
+    return idx;
+  }
+
+  /** The group of a card, or null. */
+  function groupOf(settings) {
+    var idx = groupIndex(settings);
+    return function (card) { return idx[cardKey(card)] || null; };
+  }
+
+  /**
+   * Returns card -> rule ({ since } or null). A card is followed by name, by
+   * being in one of your groups, or by a category keyword; never when excluded.
+   * only: restrict to one group id ('' = followed cards in no group).
+   */
+  function makeMatcher(settings, db, only) {
     var names = {};
+    (settings.groups || []).forEach(function (g) {
+      g.cards.forEach(function (name) { names[cardKey(name)] = { name: name, since: null }; });
+    });
     settings.tracking.cards.forEach(function (c) {
       names[cardKey(c.name)] = { name: c.name, since: Time.parseDateInput(c.since) };
     });
+    var groups = groupIndex(settings);
+    var restrict = only !== undefined && only !== null;
     var kws = settings.tracking.categories.map(function (c) { return cardKey(c.keyword); }).filter(Boolean);
     var excluded = {};
     (settings.tracking.excluded || []).forEach(function (c) { excluded[cardKey(c.name)] = true; });
     return function (card) {
       var k = cardKey(card);
       if (excluded[k]) return null;
+      if (restrict && (groups[k] ? groups[k].id : '') !== only) return null;
       if (names[k]) return names[k];
       if (kws.length) {
         var meta = db.cards[k];
@@ -75,14 +104,21 @@
     };
   }
 
-  function compute(rawDb, rawSettings, now) {
+  /**
+   * opts.group: only the cards of this group id ('' = followed cards in no group);
+   * omitted: every followed card.
+   */
+  function compute(rawDb, rawSettings, now, opts) {
     var db = Store.normalizeDb(rawDb || Store.emptyDb());
     var settings = rawSettings;
     now = now || Date.now();
+    opts = opts || {};
     var v = settings.valuation;
     var fee = v.commissionPct / 100;
     var haircut = v.haircutPct / 100;
-    var match = makeMatcher(settings, db);
+    var onlyGroup = opts.group === undefined ? null : opts.group;
+    var match = makeMatcher(settings, db, onlyGroup);
+    var groupIdx = groupIndex(settings);
     var warnings = [];
 
     function decorate(rec, isSale) {
@@ -92,7 +128,9 @@
       var inRule = !!rule && (rule.since === null || rec.time >= rule.since);
       return Object.assign({}, rec, {
         key: key,
+        group: groupIdx[key] ? groupIdx[key].id : null,
         excluded: excluded,
+        booster: isSale && Store.isBooster(db, rec.id),
         matchesRule: !!rule,
         tracked: inRule && !excluded,
         isSale: isSale
@@ -131,6 +169,7 @@
     tp.forEach(function (r) { (queues[r.key] = queues[r.key] || []).push(r); });
     var heads = {};
     var unmatched = 0;
+    var boosterCost = v.boosterCost || 0;
     sales.forEach(function (s) {
       s.lot = null;
       s.cost = null;
@@ -141,7 +180,15 @@
       s.index = s.tracked && s.status === SOLD && avgSell[s.key] ? s.price / avgSell[s.key] : null;
       if (s.excluded) { s.check = 'Exclue'; return; }
       if (!s.tracked) { s.check = s.matchesRule ? 'Avant la date de suivi' : 'Non suivie'; return; }
-      if (s.status !== SOLD) { s.check = 'OK'; return; }
+      if (s.status !== SOLD) { s.check = s.booster ? 'Booster (invendue)' : 'OK'; return; }
+      if (s.booster) {
+        // Opened in a booster: never bought, consumes no purchase.
+        s.cost = boosterCost;
+        s.profit = s.net - boosterCost;
+        s.margin = null; // no real purchase behind it
+        s.check = 'Booster';
+        return;
+      }
       var q = queues[s.key] || [];
       var h = heads[s.key] || 0;
       var lot = q[h];
@@ -171,38 +218,54 @@
     // and other players' sales seen on the site (non-shiny copies).
     var soldEvidence = {};
     sales.forEach(function (s) {
-      if (s.status === SOLD && !s.excluded && !s.shiny) (soldEvidence[s.key] = soldEvidence[s.key] || []).push({ t: s.time, price: s.price });
+      if (s.status === SOLD && !s.excluded && !s.shiny) (soldEvidence[s.key] = soldEvidence[s.key] || []).push({ t: s.time, price: s.price, kind: 'own' });
     });
-    var evidenceMaps = [db.marketSales || {}].concat(settings.market.useEstimates ? [db.marketEstimates || {}] : []);
-    evidenceMaps.forEach(function (map) {
+    var evidenceMaps = [[db.marketSales || {}, 'market']].concat(settings.market.useEstimates ? [[db.marketEstimates || {}, 'est']] : []);
+    evidenceMaps.forEach(function (pair) {
+      var map = pair[0];
       Object.keys(map).forEach(function (k) {
         if (/ ✦$/.test(k)) return;
-        map[k].forEach(function (o) { (soldEvidence[k] = soldEvidence[k] || []).push({ t: o.t, price: o.price }); });
+        map[k].forEach(function (o) { (soldEvidence[k] = soldEvidence[k] || []).push({ t: o.t, price: o.price, kind: pair[1] }); });
       });
     });
     Object.keys(soldEvidence).forEach(function (k) { soldEvidence[k].sort(function (a, b) { return a.t - b.t; }); });
 
     var windowMs = v.windowDays * DAY;
-    function unitValue(key, at, fallbackCost) {
+    /**
+     * Estimated value of one card at time `at`, with how it was obtained
+     * (detail: the sales or the listing used, for the "Stock" tab).
+     */
+    function unitValue(key, at, fallbackCost, withDetail) {
       var ev = (soldEvidence[key] || []).filter(function (o) { return o.t <= at; });
       var recent = ev.filter(function (o) { return o.t >= at - windowMs; }).slice(-v.sampleSize);
       var base = null;
       var source = null;
+      var samples = [];
+      var ask = null;
       if (recent.length) {
         base = median(recent.map(function (o) { return o.price; }));
         source = SOURCE.recent;
+        samples = recent;
       } else {
-        var ask = Market.askAt(db, key, at);
-        if (ask !== null) {
-          base = ask;
+        ask = withDetail ? Market.askDetail(db, key, at) : null;
+        var askPrice = withDetail ? (ask ? ask.price : null) : Market.askAt(db, key, at);
+        if (askPrice !== null) {
+          base = askPrice;
           source = SOURCE.asks;
         } else if (ev.length) {
-          base = median(ev.slice(-v.sampleSize).map(function (o) { return o.price; }));
+          samples = ev.slice(-v.sampleSize);
+          base = median(samples.map(function (o) { return o.price; }));
           source = SOURCE.old;
         }
       }
-      if (base === null) return { value: fallbackCost, source: SOURCE.cost };
-      return { value: base * (1 - fee) * (1 - haircut), source: source };
+      if (base === null) {
+        return { value: fallbackCost, source: SOURCE.cost, detail: withDetail ? { method: 'cost', base: fallbackCost, samples: [], ask: null } : null };
+      }
+      return {
+        value: base * (1 - fee) * (1 - haircut),
+        source: source,
+        detail: withDetail ? { method: METHOD[source], base: base, samples: samples.slice(), ask: source === SOURCE.asks ? ask : null } : null
+      };
     }
 
     // Inventory now.
@@ -220,9 +283,10 @@
     });
     var inventory = Object.keys(invByKey).map(function (k) {
       var it = invByKey[k];
-      var uv = unitValue(k, now, it.cost / it.qty);
+      var uv = unitValue(k, now, it.cost / it.qty, true);
       return {
         key: k,
+        group: groupIdx[k] ? groupIdx[k].id : null,
         card: titleOf(k, it.card),
         rarity: it.rarity,
         qty: it.qty,
@@ -230,6 +294,7 @@
         avgCost: it.cost / it.qty,
         unitValue: uv.value,
         valueSource: uv.source,
+        valuation: uv.detail,
         value: uv.value * it.qty,
         unrealized: uv.value * it.qty - it.cost,
         oldest: it.oldest,
@@ -244,10 +309,12 @@
       return named ? named.name : fallback;
     }
 
-    // Per card.
+    // Per card (followed cards without any transaction are listed too).
     var cardKeys = {};
     tp.concat(ts).forEach(function (r) { cardKeys[r.key] = r.card; });
-    settings.tracking.cards.forEach(function (c) { var k = cardKey(c.name); if (!cardKeys[k]) cardKeys[k] = c.name; });
+    var followedNames = settings.tracking.cards.map(function (c) { return c.name; });
+    (settings.groups || []).forEach(function (g) { followedNames = followedNames.concat(g.cards); });
+    followedNames.forEach(function (name) { var k = cardKey(name); if (!cardKeys[k] && match(name)) cardKeys[k] = name; });
     var target = v.targetMarginPct / 100;
     var cards = Object.keys(cardKeys).map(function (k) {
       var ps = tp.filter(function (r) { return r.key === k; });
@@ -263,6 +330,7 @@
       var last = ps.concat(ls).sort(byTime).pop();
       return {
         key: k,
+        group: groupIdx[k] ? groupIdx[k].id : null,
         card: titleOf(k, cardKeys[k]),
         rarity: last ? last.rarity : (db.cards[k] && db.cards[k].rarity) || '',
         purchases: ps.length,
@@ -383,6 +451,7 @@
     var totalCogs = allSold.reduce(function (s, r) { return s + r.cost; }, 0);
     var totalProfit = allSold.reduce(function (s, r) { return s + r.profit; }, 0);
     var activeDays7 = days.filter(function (d) { return d.day >= Time.addDays(Time.dayKey(now), -6); }).length;
+    var boosterSold = tsSold.filter(function (r) { return r.booster; });
     var kpis = {
       realizedToday: sumDays(1, 'realized'),
       realized7: sumDays(7, 'realized'),
@@ -403,15 +472,18 @@
       sellRate: ts.length ? tsSold.length / ts.length : null,
       margin: totalCogs > 0 ? totalProfit / totalCogs : null,
       unmatched: unmatched,
+      boosterSales: boosterSold.length,
+      boosterProfit: boosterSold.reduce(function (s, r) { return s + r.profit; }, 0),
       trackedPurchases: tp.length,
       trackedSales: ts.length
     };
 
-    if (!settings.tracking.cards.length && !settings.tracking.categories.length) {
-      warnings.push('Aucune carte suivie : ajoutez les cartes que vous échangez dans les paramètres.');
+    var groupCards = (settings.groups || []).reduce(function (n, g) { return n + g.cards.length; }, 0);
+    if (!settings.tracking.cards.length && !settings.tracking.categories.length && !groupCards) {
+      warnings.push('Aucune carte suivie : ajoutez les cartes que vous échangez dans les paramètres ou dans un groupe.');
     }
     if (unmatched && v.unmatched === 'ignore') {
-      warnings.push(unmatched + ' vente(s) suivie(s) sans achat correspondant : elles ne comptent pas dans le profit. Vérifiez les achats exclus ou la date de début de suivi.');
+      warnings.push(unmatched + ' vente(s) suivie(s) sans achat correspondant : elles ne comptent pas dans le profit. Si la carte vient d\'un booster, cochez « Booster » sur la vente (onglet Transactions → Ventes) ; sinon vérifiez les achats exclus ou la date de début de suivi.');
     }
 
     // Prices over time (for the "Prix" charts).
@@ -455,6 +527,7 @@
     return {
       now: now,
       settings: settings,
+      group: onlyGroup,
       market: market,
       purchases: purchases,
       sales: sales,
@@ -473,6 +546,54 @@
     };
   }
 
+  /**
+   * Totals per group (and "Sans groupe" for followed cards in no group), from a
+   * model computed for every followed card.
+   */
+  function summarizeGroups(m) {
+    var groups = (m.settings.groups || []).map(function (g) {
+      return { id: g.id, name: g.name, color: g.color, cards: g.cards.length };
+    }).concat([{ id: '', name: 'Sans groupe', color: '', cards: 0 }]);
+    var by = {};
+    groups.forEach(function (g) {
+      by[g.id] = Object.assign(g, {
+        purchases: 0, spent: 0, sold: 0, revenue: 0, realized: 0, realized7: 0, realized30: 0,
+        boosterSales: 0, stockQty: 0, stockCost: 0, stockValue: 0, unrealized: 0
+      });
+    });
+    var d7 = Time.dayStart(Time.addDays(Time.dayKey(m.now), -6));
+    var d30 = Time.dayStart(Time.addDays(Time.dayKey(m.now), -29));
+    m.purchases.forEach(function (r) {
+      if (!r.tracked) return;
+      var g = by[r.group || ''];
+      g.purchases++;
+      g.spent += r.price;
+    });
+    m.sales.forEach(function (r) {
+      if (!r.tracked || r.status !== SOLD) return;
+      var g = by[r.group || ''];
+      g.sold++;
+      g.revenue += r.net;
+      if (r.booster) g.boosterSales++;
+      if (r.profit === null) return;
+      g.realized += r.profit;
+      if (r.time >= d7) g.realized7 += r.profit;
+      if (r.time >= d30) g.realized30 += r.profit;
+    });
+    m.inventory.forEach(function (it) {
+      var g = by[it.group || ''];
+      g.stockQty += it.qty;
+      g.stockCost += it.cost;
+      g.stockValue += it.value;
+      g.unrealized += it.unrealized;
+    });
+    var none = by[''];
+    var noneCards = {};
+    m.cards.forEach(function (c) { if (!c.group) noneCards[c.key] = true; });
+    none.cards = Object.keys(noneCards).length;
+    return groups.filter(function (g) { return g.id || g.purchases || g.sold || g.stockQty; });
+  }
+
   function knownCards(db, purchases, sales) {
     var seen = {};
     Object.keys(db.cards).forEach(function (k) { if (db.cards[k].title) seen[k] = db.cards[k].title; });
@@ -480,7 +601,11 @@
     return Object.keys(seen).map(function (k) { return seen[k]; }).sort(function (a, b) { return a.localeCompare(b, 'fr'); });
   }
 
-  var api = { compute: compute, makeMatcher: makeMatcher, median: median, round: round, SOURCE: SOURCE, MAX_SERIES: MAX_SERIES };
+  var api = {
+    compute: compute, makeMatcher: makeMatcher, groupIndex: groupIndex, groupOf: groupOf, summarizeGroups: summarizeGroups,
+    median: median, round: round,
+    SOURCE: SOURCE, MAX_SERIES: MAX_SERIES
+  };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.WMStats = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

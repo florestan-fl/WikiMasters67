@@ -21,6 +21,7 @@
 
   <nav class="tabs" role="tablist">
     <a role="tab" href="#overview" data-tab="overview">Vue d'ensemble</a>
+    <a role="tab" href="#groups" data-tab="groups">Groupes</a>
     <a role="tab" href="#market" data-tab="market">Marché</a>
     <a role="tab" href="#cards" data-tab="cards">Par carte</a>
     <a role="tab" href="#hours" data-tab="hours">Par heure</a>
@@ -33,6 +34,12 @@
 
   <main>
     <div id="export-state" aria-live="polite"></div>
+    <div id="group-bar" class="group-bar" hidden>
+      <span class="dot" aria-hidden="true"></span>
+      <label for="group-filter">Groupe</label>
+      <select id="group-filter"></select>
+      <span id="group-bar-note" class="small secondary"></span>
+    </div>
     <div id="warnings"></div>
 
     <!-- ============================================================ overview -->
@@ -68,6 +75,37 @@
         <summary>Données par jour</summary>
         <div id="days-table"></div>
       </details>
+    </section>
+
+    <!-- ============================================================== groups -->
+    <section data-panel="groups" hidden>
+      <div id="groups-list">
+        <div class="filters">
+          <button id="new-group" class="primary">+ Nouveau groupe</button>
+          <span class="small secondary">Vos propres groupes de cartes (pas les catégories du jeu) : chacun a ses cartes, sa couleur, ses statistiques et ses recherches.</span>
+        </div>
+        <div id="group-panels" class="group-panels"></div>
+        <div class="filters">
+          <span class="small secondary">Période :</span>
+          <div class="seg" id="groups-period">
+            <button data-days="7">7 jours</button>
+            <button data-days="30" aria-pressed="true">30 jours</button>
+            <button data-days="0">Tout</button>
+          </div>
+        </div>
+        <div class="charts">
+          <figure class="card chart">
+            <figcaption><h3>Profit réalisé par jour et par groupe</h3><span class="small muted">W</span></figcaption>
+            <div class="chart-box"><canvas id="c-groups-daily"></canvas><div class="chart-empty muted" hidden>Aucune vente suivie sur la période.</div></div>
+          </figure>
+          <figure class="card chart">
+            <figcaption><h3>Trading estimé cumulé par groupe</h3><span class="small muted">Réalisé + variation de la plus-value latente du stock (W)</span></figcaption>
+            <div class="chart-box"><canvas id="c-groups-cumul"></canvas><div class="chart-empty muted" hidden>Pas encore de données.</div></div>
+          </figure>
+        </div>
+        <div class="card"><h3>Par groupe</h3><div id="groups-table"></div></div>
+      </div>
+      <div id="group-detail" hidden></div>
     </section>
 
     <!-- ============================================================== market -->
@@ -144,8 +182,11 @@
 
     <!-- =============================================================== stock -->
     <section data-panel="stock" hidden>
+      <div id="stock-methods" class="tiles"></div>
+      <div id="stock-detail"></div>
       <div class="card">
         <h3>Inventaire suivi</h3>
+        <p class="small muted">Cliquez une carte pour le détail du calcul de sa valeur.</p>
         <div id="stock-table"></div>
       </div>
       <div class="card">
@@ -164,7 +205,8 @@
         <input type="search" id="tx-search" placeholder="Filtrer par carte ou joueur">
         <label class="check small"><input type="checkbox" id="tx-tracked"> Cartes suivies uniquement</label>
       </div>
-      <p class="small muted">Cochez « Exclure » pour retirer une transaction des statistiques (par exemple un exemplaire gardé pour la collection).</p>
+      <p class="small muted">Cochez « Exclure » pour retirer une transaction des statistiques (par exemple un exemplaire gardé pour la collection).
+        Sur une vente, cochez « Booster » si la carte vient d'un booster que vous avez ouvert : elle ne cherche pas d'achat correspondant et compte avec le coût défini dans les paramètres (Valorisation du stock).</p>
       <div class="card"><div id="tx-table"></div></div>
     </section>
 
@@ -215,6 +257,19 @@
       </div>
 
       <div class="card feature">
+        <h2>Recherches automatiques</h2>
+        <label class="check"><input type="checkbox" id="autoSearch"> <span><b>Lancer automatiquement</b> les recherches de vos groupes cochées « Auto » (onglet Groupes), pour alimenter les bonnes affaires et les notifications</span></label>
+        <div class="notice warn small" style="white-space: normal">Quand cette option est active, l'extension envoie elle-même des requêtes au jeu : la même requête que le Marché quand vous lancez la recherche
+          (première page), depuis votre onglet du jeu, chaque recherche au plus toutes les N minutes, jamais deux requêtes à moins de 30 s d'intervalle, avec un maximum par jour.
+          Ces requêtes ne cherchent pas à passer pour une visite humaine. Le règlement du jeu interdit les scripts : vous en prenez le risque pour votre compte.</div>
+        <div class="grid">
+          <label>Chaque recherche au plus toutes les (minutes, min. 5)<input type="number" id="autoSearchMin" min="5" max="1440" step="5"></label>
+          <label>Maximum par jour<input type="number" id="autoSearchMaxPerDay" min="1" max="2000" step="10"></label>
+        </div>
+        <div id="autosearch-status" class="small secondary"></div>
+      </div>
+
+      <div class="card feature">
         <h2>Relevé automatique des prix finaux</h2>
         <label class="check"><input type="checkbox" id="autoResolve"> <span><b>Relever automatiquement</b> le prix final des enchères terminées de vos cartes suivies</span></label>
         <div class="notice warn small" style="white-space: normal">Quand cette option est active, l'extension envoie elle-même des requêtes au jeu : une par enchère terminée de vos cartes suivies
@@ -239,6 +294,7 @@
         <h2>Cartes suivies</h2>
         <p class="secondary small">Seules les transactions de ces cartes comptent dans les statistiques (profit, stock, graphiques), et leurs prix du marché sont listés dans l'onglet Marché.
           Toutes vos transactions sont enregistrées quand même : ajouter une carte plus tard reprend tout son historique. Vous pouvez aussi cliquer « + Suivre » sous une enchère sur le site.</p>
+        <p class="secondary small">Les cartes de vos <a href="#groups">groupes</a> sont suivies aussi, sans avoir à les ajouter ici.</p>
         <div class="list-head small muted"><span>Nom de la carte (titre Wikipédia)</span><span>Suivie depuis (facultatif)</span><span></span></div>
         <div id="cards" class="rows"></div>
         <button id="add-card">+ Ajouter une carte</button>
@@ -284,6 +340,7 @@
               <option value="zero">Comptées avec un coût de 0 (cartes de paquets)</option>
             </select>
           </label>
+          <label>Coût d'une carte de booster (W)<input type="number" id="boosterCost" min="0" step="1"></label>
         </div>
       </div>
 
@@ -321,6 +378,7 @@
           <button data-csv="Achats">Achats</button>
           <button data-csv="Ventes">Ventes</button>
           <button data-csv="Par carte">Par carte</button>
+          <button data-csv="Par groupe">Par groupe</button>
           <button data-csv="Prix du marché">Prix du marché</button>
           <button data-csv="Par jour">Par jour</button>
           <button data-csv="Inventaire">Inventaire</button>
@@ -341,6 +399,7 @@
   <script src="lib/settings.js"></script>
   <script src="lib/store.js"></script>
   <script src="lib/market.js"></script>
+  <script src="lib/searches.js"></script>
   <script src="lib/stats.js"></script>
   <script src="lib/tables.js"></script>
   <script src="lib/format.js"></script>
